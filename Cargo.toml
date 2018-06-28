@@ -1,0 +1,6 @@
+[package]
+name = "hydra"
+version = "0.1.0"
+authors = ["c0gent <nsan1129@gmail.com>"]
+
+[dependencies]
