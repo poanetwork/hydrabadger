@@ -1,6 +1,18 @@
 [package]
-name = "hydra"
+name = "hydrabadger"
 version = "0.1.0"
 authors = ["c0gent <nsan1129@gmail.com>"]
 
 [dependencies]
+log = "*"
+pretty_env_logger = "*"
+clap = "*"
+failure = "*"
+crossbeam = "*"
+crossbeam-channel = "*"
+
+[dependencies.hbbft]
+version = "*"
+git = "https://github.com/c0gent/hbbft"
+branch = "c0gent-parity"
+features = ["serialization-protobuf"]
