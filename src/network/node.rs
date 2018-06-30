@@ -17,7 +17,7 @@ use hbbft::crypto::poly::Poly;
 use hbbft::crypto::SecretKeySet;
 use hbbft::messaging::{DistAlgorithm, NetworkInfo, SourcedMessage};
 use hbbft::proto::message::BroadcastProto;
-use network::commst;
+use network::comms_task;
 use network::connection;
 use network::messaging::Messaging;
 
@@ -27,7 +27,7 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	IoError(io::Error),
 	#[fail(display = "{}", _0)]
-    CommsError(commst::Error),
+    CommsError(comms_task::Error),
 }
 
 impl From<io::Error> for Error {
@@ -36,8 +36,8 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<commst::Error> for Error {
-    fn from(err: commst::Error) -> Error {
+impl From<comms_task::Error> for Error {
+    fn from(err: comms_task::Error) -> Error {
         Error::CommsError(err)
     }
 }
@@ -150,7 +150,7 @@ impl<T> Node<T>
                 let rx_to_comms = &rxs_to_comms[node_index];
 
                 scope.spawn(move || {
-                    match commst::CommsTask::<BroadcastProto, BroadcastMessage>::new(
+                    match comms_task::CommsTask::<BroadcastProto, BroadcastMessage>::new(
                         tx_from_comms,
                         rx_to_comms,
                         // FIXME: handle error

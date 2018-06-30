@@ -8,3 +8,4 @@ extern crate crossbeam;
 extern crate hbbft;
 
 pub mod network;
+pub use network::{Node};

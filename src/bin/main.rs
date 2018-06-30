@@ -7,7 +7,7 @@ extern crate hydrabadger;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::HashSet;
 use clap::{App, Arg, ArgMatches};
-use hydrabadger::network::Node;
+use hydrabadger::Node;
 
 
 /// Returns parsed command line arguments.

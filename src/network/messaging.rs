@@ -5,9 +5,10 @@ use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use hbbft::messaging::{SourcedMessage, Target, TargetedMessage};
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Fail)]
 pub enum Error {
-    NoSuchTarget,
+    #[fail(display = "Invalid messaging target: '{}'", _0)]
+    NoSuchTarget(usize),
     // SendError,
 }
 
@@ -132,10 +133,14 @@ impl<M: Send> Messaging<M> {
                                     }
                                 },
                                 Target::Node(i) => {
-                                    if i < txs_to_comms.len() {
-                                        txs_to_comms[i].send(tm.message);
-                                    } else {
-                                        result = Err(Error::NoSuchTarget);
+                                    // if i < txs_to_comms.len() {
+                                    //     txs_to_comms[i].send(tm.message);
+                                    // } else {
+                                    //     result = Err(Error::NoSuchTarget);
+                                    // }
+                                    match txs_to_comms.get(i) {
+                                        Some(tx) => tx.send(tm.message),
+                                        None => { result = Err(Error::NoSuchTarget(i)); }
                                     }
                                 }
                             }

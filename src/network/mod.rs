@@ -1,9 +1,9 @@
-pub mod commst;
+pub mod comms_task;
 pub mod connection;
 pub mod messaging;
 pub mod node;
 
-pub use self::commst::*;
-pub use self::connection::*;
-pub use self::messaging::*;
-pub use self::node::*;
+// TODO: De-glob:
+pub use self::comms_task::CommsTask;
+pub use self::messaging::Messaging;
+pub use self::node::Node;
