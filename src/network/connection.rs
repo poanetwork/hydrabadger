@@ -24,20 +24,19 @@ impl Connection {
 
 /// Connect this node to remote peers. A vector of successful connections is returned, as well as
 /// our own node ID.
-pub fn make(
-    bind_address: &SocketAddr,
-    remote_addresses: &HashSet<SocketAddr>,
-) -> (String, Vec<Connection>) {
+pub fn make(bind_address: &SocketAddr, remote_addresses: &HashSet<SocketAddr>)
+        -> (String, Vec<Connection>) {
     // Listen for incoming connections on a given TCP port.
-    let bind_address = bind_address;
     let listener = TcpListener::bind(bind_address).expect("start listener");
     let here_str = format!("{}", bind_address);
+
     // Use a `BTreeMap` to make sure we all iterate in the same order.
     let remote_by_str: BTreeMap<String, _> = remote_addresses
         .iter()
         .map(|addr| (format!("{}", addr), addr))
         .filter(|(there_str, _)| *there_str != here_str)
         .collect();
+
     // Wait for all nodes with larger addresses to connect.
     let connections = remote_by_str
         .into_iter()
@@ -50,5 +49,6 @@ pub fn make(
             Connection::new(tcp_conn, there_str.to_string())
         })
         .collect();
+
     (here_str, connections)
 }

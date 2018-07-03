@@ -37,11 +37,11 @@ pub struct CommsTask<'a, P: 'a, M: 'a> {
 
 impl<'a, P: Message + 'a, M: Into<P> + From<P> + Send + 'a> CommsTask<'a, P, M> {
     pub fn new(
-        tx: &'a Sender<SourcedMessage<M, usize>>,
-        rx: &'a Receiver<M>,
-        stream: TcpStream,
-        node_index: usize,
-    ) -> Self {
+            tx: &'a Sender<SourcedMessage<M, usize>>,
+            rx: &'a Receiver<M>,
+            stream: TcpStream,
+            node_index: usize,
+            ) -> Self {
         debug!(
             "Creating comms task #{} for {:?}",
             node_index,

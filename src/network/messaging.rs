@@ -9,14 +9,7 @@ use hbbft::messaging::{SourcedMessage, Target, TargetedMessage};
 pub enum Error {
     #[fail(display = "Invalid messaging target: '{}'", _0)]
     NoSuchTarget(usize),
-    // SendError,
 }
-
-// impl<T> From<crossbeam_channel::SendError<T>> for Error {
-//     fn from(_: crossbeam_channel::SendError<T>) -> Error {
-//         Error::SendError
-//     }
-// }
 
 
 /// The queue functionality for messages sent between algorithm instances.

@@ -2,14 +2,39 @@
 name = "hydrabadger"
 version = "0.1.0"
 authors = ["c0gent <nsan1129@gmail.com>"]
+autobins = false
+
+[[bin]]
+name = "simulation"
+path = "src/bin/simulation.rs"
+
+[[bin]]
+name = "network"
+path = "src/bin/network.rs"
 
 [dependencies]
 log = "*"
-pretty_env_logger = "*"
+env_logger = "*"
 clap = "*"
 failure = "*"
 crossbeam = "*"
 crossbeam-channel = "*"
+chrono = "*"
+rust-crypto = "*"
+num-traits = "*"
+num-bigint = "*"
+bincode = "*"
+colored = "*"
+itertools = "*"
+pairing = "*"
+rand = "*"
+serde = "*"
+serde_derive = "*"
+signifix = "*"
+futures = "0.1"
+tokio = "0.1.7"
+tokio-codec = "*"
+bytes = "*"
 
 [dependencies.hbbft]
 version = "*"
