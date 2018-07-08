@@ -23,21 +23,30 @@ chrono = "*"
 rust-crypto = "*"
 num-traits = "*"
 num-bigint = "*"
-bincode = "*"
 colored = "*"
 itertools = "*"
 pairing = "*"
-rand = "*"
+rand = "0.4.2"
 serde = "*"
+# serde_bytes = "*"
 serde_derive = "*"
 signifix = "*"
 futures = "0.1"
 tokio = "0.1.7"
 tokio-codec = "*"
+tokio-io = "*"
+bincode = "*"
+tokio-serde = "*"
+tokio-serde-bincode = "*"
 bytes = "*"
+uuid = { version = "0.6", features = ["v4", "serde"] }
+byteorder = "*"
+
+# tokio-serde-bincode = "*"
+#
 
 [dependencies.hbbft]
 version = "*"
 git = "https://github.com/c0gent/hbbft"
-branch = "c0gent-parity"
+branch = "master"
 features = ["serialization-protobuf"]

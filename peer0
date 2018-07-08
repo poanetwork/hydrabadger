@@ -1,0 +1,3 @@
+#/bin/bash
+HYDRABADGER_LOG=error,info,debug cargo run --bin network -- -b localhost:3000
+

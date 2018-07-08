@@ -318,16 +318,16 @@ impl EpochInfo {
 }
 
 
-/// Proposes `num_txs` values and expects nodes to output and order them.
+/// Proposes `txn_count` values and expects nodes to output and order them.
 fn simulate_honey_badger(mut network: TestNetwork<HoneyBadger<Transaction, NodeUid>>,
-        num_txs: usize) {
+        txn_count: usize) {
     // Returns `true` if the node has not output all transactions yet.
     // If it has, and has advanced another epoch, it clears all messages for later epochs.
     let node_busy = |node: &mut TestNode<HoneyBadger<Transaction, NodeUid>>| {
         node.outputs
             .iter()
             .map(|&(_, ref batch)| batch.len())
-            .sum::<usize>() < num_txs
+            .sum::<usize>() < txn_count
     };
 
     // Handle messages until all nodes have output all transactions.
@@ -354,20 +354,20 @@ fn simulate_honey_badger(mut network: TestNetwork<HoneyBadger<Transaction, NodeU
 // --cpu <cpu>             The CPU speed, in percent of this machine's [default: 100]
 // --tx-size <size>        The size of a transaction, in bytes [default: 10]
 fn main() {
-    let node_count_total = 10;
+    let node_count_total = 15;
     let node_count_faulty = 1;
     let txn_count = 1000;
     let batch_size = 100;
     let latency = 100;
     let bandwidth = 2000;
     let cpu = 100;
-    let txn_size = 10;
+    let txn_bytes = 10;
 
     println!("Simulating Honey Badger with:");
     println!("{} nodes, {} faulty", node_count_total, node_count_faulty);
     println!(
         "{} transactions, {} bytes each, ≤{} per epoch",
-        txn_count, txn_size, batch_size
+        txn_count, txn_bytes, batch_size
     );
     println!(
         "Network latency: {} ms, bandwidth: {} kbit/s, {:5.2}% CPU speed",
@@ -376,7 +376,7 @@ fn main() {
     println!();
 
     let node_count_good = node_count_total - node_count_faulty;
-    let txns = (0..txn_count).map(|_| Transaction::new(txn_size));
+    let txns = (0..txn_count).map(|_| Transaction::new(txn_bytes));
     let sk_set = SecretKeySet::random(node_count_faulty, &mut rand::thread_rng());
     let pk_set = sk_set.public_keys();
 
