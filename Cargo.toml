@@ -9,8 +9,8 @@ autobins = false
 # path = "src/bin/simulation.rs"
 
 [[bin]]
-name = "network"
-path = "src/bin/network_test.rs"
+name = "peer_node"
+path = "src/bin/peer_node.rs"
 
 [dependencies]
 log = "*"

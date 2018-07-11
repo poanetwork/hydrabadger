@@ -9,7 +9,7 @@
 use crossbeam;
 use std::{
     time::{Duration, Instant},
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, Mutex},
     {self, iter, process, thread, time},
     collections::{BTreeSet, HashSet, HashMap, VecDeque},
     fmt::Debug,
@@ -50,8 +50,8 @@ use hbbft::{
     messaging::{DistAlgorithm, NetworkInfo, SourcedMessage, Target, TargetedMessage},
     proto::message::BroadcastProto,
     honey_badger::HoneyBadger,
-    dynamic_honey_badger::{/*DynamicHoneyBadger,*/ /*Input, Batch,*/ Message, /*Change*/},
-    queueing_honey_badger::{QueueingHoneyBadger, Input, Batch, /*Message,*/ Change},
+    honey_badger::{Message},
+    queueing_honey_badger::{QueueingHoneyBadger, Input, Batch, Change},
 };
 
 
@@ -61,6 +61,8 @@ pub enum Error {
 	Io(std::io::Error),
     #[fail(display = "{}", _0)]
     Serde(bincode::Error),
+    #[fail(display = "Error polling hydrabadger internal receiver")]
+    HydrabadgerPoll,
 }
 
 impl From<std::io::Error> for Error {
@@ -151,19 +153,19 @@ impl InternalMessage {
 }
 
 
-/// Transmit half of the message channel.
+/// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type WireTx = mpsc::UnboundedSender<WireMessage>;
 
-/// Receive half of the message channel.
+/// Receive half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type WireRx = mpsc::UnboundedReceiver<WireMessage>;
 
-/// Transmit half of the message channel.
+/// Transmit half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type InternalTx = mpsc::UnboundedSender<InternalMessage>;
 
-/// Receive half of the message channel.
+/// Receive half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type InternalRx = mpsc::UnboundedReceiver<InternalMessage>;
 
@@ -259,12 +261,13 @@ struct Peer {
 
     /// Handle to the shared message state.
     // txs: PeerTxs,
-    hb: Arc<Hydrabadger>,
+    hb: Arc<HydrabadgerInner>,
 
     /// Receive half of the message channel.
     rx: WireRx,
 
-    peer_internal_tx: InternalTx,
+    /// Channel to `Hydrabadger`.
+    internal_tx: InternalTx,
 
     /// Peer socket address.
     addr: SocketAddr,
@@ -272,8 +275,8 @@ struct Peer {
 
 impl Peer {
     /// Create a new instance of `Peer`.
-    fn new(hb: Arc<Hydrabadger>, wire_messages: WireMessages,
-            peer_internal_tx: InternalTx) -> Peer {
+    fn new(hb: Arc<HydrabadgerInner>, wire_messages: WireMessages,
+            internal_tx: InternalTx) -> Peer {
         // Get the client socket address
         let addr = wire_messages.socket().peer_addr().unwrap();
 
@@ -288,13 +291,13 @@ impl Peer {
             wire_messages,
             hb,
             rx,
-            peer_internal_tx,
+            internal_tx,
             addr,
         }
     }
 
     /// Sends a message to all connected peers.
-    fn send_to_all(&mut self, msg: &WireMessage) {
+    fn wire_to_all(&mut self, msg: &WireMessage) {
         // Now, send the message to all other peers
         for (addr, tx) in self.hb.peer_txs.read().unwrap().iter() {
             // Don't send the message to ourselves
@@ -352,16 +355,18 @@ impl Future for Peer {
 
         // Read new messages from the socket
         while let Async::Ready(message) = self.wire_messages.poll()? {
-            info!("Received message: {:?}", message);
+            trace!("Received message: {:?}", message);
 
             if let Some(msg) = message {
                 match msg.kind() {
-                    WireMessageKind::Hello => info!("HELLO RECEIVED from '{}'", self.uid),
+                    WireMessageKind::Hello => error!("Duplicate `WireMessage::Hello` \
+                        received from '{}'", self.uid),
                     _ => (),
                 }
             } else {
                 // EOF was reached. The remote client has disconnected. There is
                 // nothing more to do.
+                info!("Peer ('{}') disconnected.", self.uid);
                 return Ok(Async::Ready(()));
             }
         }
@@ -382,19 +387,12 @@ impl Drop for Peer {
 }
 
 
-
-struct HoneyBadgerTask {
-
-}
-
-
-
-pub struct Hydrabadger {
+/// The `Arc`-wrapped portion of `Hydrabadger`.
+struct HydrabadgerInner {
     /// Node uid:
     uid: Uuid,
-	/// Incoming connection socket.
+    /// Incoming connection socket.
     addr: SocketAddr,
-    // value: Option<Vec<u8>>,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_txs: RwLock<HashMap<SocketAddr, WireTx>>,
@@ -404,24 +402,25 @@ pub struct Hydrabadger {
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
-    peer_internal_rx: InternalRx,
-
 
     peer_out_queue: RwLock<VecDeque<TargetedMessage<Message<usize>, usize>>>,
     batch_out_queue: RwLock<VecDeque<Batch<Transaction, usize>>>,
 }
 
+
+/// The core API for creation of and event handling for a `HoneyBadger` instance.
+pub struct Hydrabadger {
+    inner: Arc<HydrabadgerInner>,
+    // TODO: Use a bounded tx/rx (find a sensible upper bound):
+    peer_internal_rx: InternalRx,
+}
+
 impl Hydrabadger {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, _value: Option<Vec<u8>>) -> Self {
-        // let node_count_good = node_count_total - node_count_faulty;
-        // let txns = (0..txn_count).map(|_| Transaction::new(txn_bytes));
         let sk_set = SecretKeySet::random(0, &mut rand::thread_rng());
         let pk_set = sk_set.public_keys();
         let uid = Uuid::new_v4();
-        // let mut all_ids = BTreeSet::new();
-        // all_ids.insert(id);
-        // let sk_share = 0;
 
         let node_ids: BTreeSet<_> = iter::once(uid).collect();
 
@@ -433,64 +432,109 @@ impl Hydrabadger {
         );
 
         let dhb = RwLock::new(QueueingHoneyBadger::builder(netinfo)
+            // Default: 100:
             .batch_size(50)
-            .max_future_epochs(0)
+            // Default: 3:
+            .max_future_epochs(3)
             .build());
-            /*.build().expect("Error creating `QueueingHoneyBadger`");*/
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
 
         Hydrabadger {
-            uid,
-            addr,
-            // value,
-            peer_txs: RwLock::new(HashMap::new()),
-            dhb,
-
-            // peer_in_queue: RwLock::new(VecDeque::new()),
-            peer_internal_tx,
+            inner: Arc::new(HydrabadgerInner {
+                uid,
+                addr,
+                peer_txs: RwLock::new(HashMap::new()),
+                dhb,
+                peer_internal_tx,
+                peer_out_queue: RwLock::new(VecDeque::new()),
+                batch_out_queue: RwLock::new(VecDeque::new()),
+            }),
             peer_internal_rx,
-
-            peer_out_queue: RwLock::new(VecDeque::new()),
-            batch_out_queue: RwLock::new(VecDeque::new()),
         }
     }
+}
 
-    pub fn connect(&self) {
+impl Future for Hydrabadger {
+    type Item = ();
+    type Error = Error;
 
+    /// Polls the internal message receiver until all txs are dropped.
+    fn poll(&mut self) -> Poll<(), Error> {
+        match self.peer_internal_rx.poll() {
+            Ok(Async::Ready(Some(i_msg))) => match i_msg.kind() {
+                InternalMessageKind::Wire(w_msg) => match w_msg.kind() {
+                    WireMessageKind::Hello => {
+                        info!("Adding node ('{}') to honey badger.", i_msg.src_uid);
+                    },
+                    _ => {},
+                },
+            },
+            Ok(Async::Ready(None)) => {
+                // The sending ends have all dropped.
+                return Ok(Async::Ready(()));
+            },
+            Ok(Async::NotReady) => {},
+            Err(()) => return Err(Error::HydrabadgerPoll),
+        };
+
+        Ok(Async::NotReady)
     }
 }
 
 
+fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>) -> impl Future<Item = (), Error = ()> {
+    info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
+    let wire_messages = WireMessages::new(socket);
+
+    wire_messages.into_future()
+        .map_err(|(e, _)| e)
+        .and_then(move |(msg_opt, w_messages)| {
+            let hb = hb.clone();
+            let peer_internal_tx = hb.peer_internal_tx.clone();
+            let peer = Peer::new(hb, w_messages, peer_internal_tx.clone());
+
+            match msg_opt {
+                Some(msg) => match msg.kind() {
+                    WireMessageKind::Hello => {
+                        peer.internal_tx.unbounded_send(InternalMessage::wire(peer.uid, msg))
+                            .map_err(|err| error!("Unable to send on internal tx. \
+                                Internal rx has dropped: {}", err)).unwrap();
+                    },
+                    _ => {
+                        error!("Peer connected without sending `WireMessageKind::Hello`.");
+                        return Either::A(future::ok(()));
+                    },
+                },
+                None => {
+                    // The remote client closed the connection without sending
+                    // a hello message.
+                    return Either::A(future::ok(()));
+                },
+            };
+
+            Either::B(peer)
+        })
+        .map_err(|err| error!("Connection error = {:?}", err))
+}
+
+
 /// Binds to a host address and returns a future which starts the node.
-pub fn node(hb: Hydrabadger, remotes: HashSet<SocketAddr>)
+pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
         -> impl Future<Item = (), Error = ()> {
-    let socket = TcpListener::bind(&hb.addr).unwrap();
-    info!("Listening on: {}", hb.addr);
+    let socket = TcpListener::bind(&hydrabadger.inner.addr).unwrap();
+    info!("Listening on: {}", hydrabadger.inner.addr);
 
-    // let peer_txs = hb.peer_txs.clone();
-    let hydrabadger = Arc::new(hb);
-
-    let hb = hydrabadger.clone();
+    let hb = hydrabadger.inner.clone();
     let listen = socket.incoming()
-        .map_err(|e| error!("failed to accept socket; error = {:?}", e))
+        .map_err(|err| error!("failed to accept socket; error = {:?}", err))
         .for_each(move |socket| {
-            let peer_addr = socket.peer_addr().unwrap();
-            info!("Incoming connection from '{}'", peer_addr);
-
-            let wire_messages = WireMessages::new(socket);
-            tokio::spawn(Peer::new(hb.clone(), wire_messages, hb.peer_internal_tx.clone())
-                .map_err(|e| {
-                    error!("Connection error = {:?}", e);
-                })
-            );
-
+            tokio::spawn(process_incoming(socket, hb.clone()));
             Ok(())
         });
 
-    // let peer_txs = hb.peer_txs.clone();
-    let uid = hydrabadger.uid.clone();
-    let hb = hydrabadger.clone();
+    let uid = hydrabadger.inner.uid.clone();
+    let hb = hydrabadger.inner.clone();
     let connect = future::lazy(move || {
         for remote_addr in remotes.iter() {
             let hb = hb.clone();
@@ -513,26 +557,25 @@ pub fn node(hb: Hydrabadger, remotes: HashSet<SocketAddr>)
         Ok(())
     });
 
-    let hb = hydrabadger.clone();
-    let list = Interval::new(Instant::now(), Duration::from_millis(3000))
+    let hb = hydrabadger.inner.clone();
+    let generate_txns = Interval::new(Instant::now(), Duration::from_millis(3000))
         .for_each(move |_| {
             let hb = hb.clone();
             let peer_txs = hb.peer_txs.read().unwrap();
-            // info!("Peer list:");
-
+            trace!("Peer list:");
             for (peer_addr, mut pb) in peer_txs.iter() {
-                info!("     peer_addr: {}", peer_addr);
+                trace!("     peer_addr: {}", peer_addr);
             }
 
-            // TODO: Send txns instead.
+            // TODO: Send txns.
 
             Ok(())
         })
-        .map_err(|err| {
-            error!("List connection inverval error: {:?}", err);
-        });
+        .map_err(|err| error!("List connection inverval error: {:?}", err));
 
-    listen.join3(connect, list).map(|(_, _, _)| ())
+    let hydrabadger = hydrabadger.map_err(|err| error!("Hydrabadger internal error: {:?}", err));
+
+    listen.join4(connect, generate_txns, hydrabadger).map(|(_, _, _, _)| ())
 }
 
 

@@ -36,11 +36,11 @@ fn arg_matches<'a>() -> ArgMatches<'a> {
             .takes_value(true)
             .multiple(true)
             .number_of_values(1))
-        .arg(Arg::with_name("broadcast-value")
-            .long("broadcast-value")
-            .value_name("BROADCAST_VALUE")
-            .help("Specifies the value to broadcast to other nodes.")
-            .takes_value(true))
+        // .arg(Arg::with_name("broadcast-value")
+        //     .long("broadcast-value")
+        //     .value_name("BROADCAST_VALUE")
+        //     .help("Specifies a value to propose to other nodes.")
+        //     .takes_value(true))
         .get_matches()
 }
 
@@ -87,10 +87,10 @@ fn main() {
         None => HashSet::new(),
     };
 
-    let broadcast_value = matches.value_of("broadcast-value")
-        .map(|bv| bv.as_bytes().to_vec());
+    // let broadcast_value = matches.value_of("broadcast-value")
+    //     .map(|bv| bv.as_bytes().to_vec());
 
-    let hb = Hydrabadger::new(bind_address, broadcast_value);
+    let hb = Hydrabadger::new(bind_address, None);
     hydrabadger::run_node(hb, remote_addresses);
 
     // match mine() {
