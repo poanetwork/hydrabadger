@@ -91,7 +91,7 @@ fn main() {
         .map(|bv| bv.as_bytes().to_vec());
 
     let hb = Hydrabadger::new(bind_address, broadcast_value);
-    hb.run(remote_addresses);
+    hydrabadger::run_node(hb, remote_addresses);
 
     // match mine() {
     //     Ok(_) => {},

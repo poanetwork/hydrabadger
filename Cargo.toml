@@ -4,13 +4,13 @@ version = "0.1.0"
 authors = ["c0gent <nsan1129@gmail.com>"]
 autobins = false
 
-[[bin]]
-name = "simulation"
-path = "src/bin/simulation.rs"
+# [[bin]]
+# name = "simulation"
+# path = "src/bin/simulation.rs"
 
 [[bin]]
 name = "network"
-path = "src/bin/network.rs"
+path = "src/bin/network_test.rs"
 
 [dependencies]
 log = "*"
@@ -47,6 +47,7 @@ byteorder = "*"
 
 [dependencies.hbbft]
 version = "*"
-git = "https://github.com/c0gent/hbbft"
-branch = "master"
+# git = "https://github.com/c0gent/hbbft"
+# branch = "master"
+path = "../hbbft"
 features = ["serialization-protobuf"]
