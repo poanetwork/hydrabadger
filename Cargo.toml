@@ -42,12 +42,9 @@ bytes = "*"
 uuid = { version = "0.6", features = ["v4", "serde"] }
 byteorder = "*"
 
-# tokio-serde-bincode = "*"
-#
-
 [dependencies.hbbft]
 version = "*"
-# git = "https://github.com/c0gent/hbbft"
-# branch = "master"
-path = "../hbbft"
+git = "https://github.com/c0gent/hbbft"
+branch = "c0gent-hydrabadger"
+# path = "../hbbft"
 features = ["serialization-protobuf"]

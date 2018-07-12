@@ -42,27 +42,34 @@ use serde::{Serializer, Deserializer, Serialize, Deserialize};
 use serde_bytes;
 use bincode::{self, serialize_into, deserialize_from, serialize, deserialize};
 use tokio_serde_bincode::{ReadBincode, WriteBincode};
-
-
 use hbbft::{
     broadcast::{Broadcast, BroadcastMessage},
-    crypto::{SecretKeySet, poly::Poly},
+    crypto::{SecretKeySet, poly::Poly, PublicKey, PublicKeySet},
     messaging::{DistAlgorithm, NetworkInfo, SourcedMessage, Target, TargetedMessage},
     proto::message::BroadcastProto,
-    honey_badger::HoneyBadger,
-    honey_badger::{Message},
-    queueing_honey_badger::{QueueingHoneyBadger, Input, Batch, Change},
+    dynamic_honey_badger::Message,
+    queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger, Input, Batch, Change},
+    // dynamic_honey_badger::{Error as DhbError, DynamicHoneyBadger, Input, Batch, Change, Message},
 };
+
+const BATCH_SIZE: usize = 150;
+const TXN_BYTES: usize = 10;
+const NEW_TXNS_PER_INTERVAL: usize = 20;
 
 
 #[derive(Debug, Fail)]
 pub enum Error {
-	#[fail(display = "{}", _0)]
+	#[fail(display = "Io error: {}", _0)]
 	Io(std::io::Error),
-    #[fail(display = "{}", _0)]
+    #[fail(display = "Serde error: {}", _0)]
     Serde(bincode::Error),
     #[fail(display = "Error polling hydrabadger internal receiver")]
     HydrabadgerPoll,
+    // FIXME: Make honeybadger error thread safe.
+    #[fail(display = "QueuingHoneyBadger propose error")]
+    QhbPropose,
+    #[fail(display = "DynamicHoneyBadger error")]
+    Dhb // FIXME: ^^^^ DhbError
 }
 
 impl From<std::io::Error> for Error {
@@ -86,12 +93,12 @@ impl Transaction {
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessageKind {
-    Hello,
+    Hello(PublicKey),
     Goodbye,
-    // Message,
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
     Message(Message<Uuid>),
+    // TargetedMessage(TargetedMessage<Uuid>),
     // Transaction()
 }
 
@@ -99,24 +106,24 @@ pub enum WireMessageKind {
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WireMessage {
-    // src_uid: Uuid,
     kind: WireMessageKind,
 }
 
 impl WireMessage {
-    pub fn hello(/*src_uid: Uuid*/) -> WireMessage {
-        WireMessage {
-            // src_uid,
-            kind: WireMessageKind::Hello,
-        }
+    pub fn hello(pub_key: PublicKey) -> WireMessage {
+        WireMessage { kind: WireMessageKind::Hello(pub_key), }
     }
 
-    // pub fn src_uid(&self) -> &Uuid {
-    //     &self.src_uid
-    // }
+    pub fn message(msg: Message<Uuid>) -> WireMessage {
+        WireMessage { kind: WireMessageKind::Message(msg), }
+    }
 
     pub fn kind(&self) -> &WireMessageKind {
         &self.kind
+    }
+
+    pub fn into_kind(self) -> WireMessageKind {
+        self.kind
     }
 }
 
@@ -125,6 +132,10 @@ impl WireMessage {
 #[derive(Clone, Debug)]
 pub enum InternalMessageKind {
     Wire(WireMessage),
+    // NewTransaction(Transaction),
+    NewTransactions(Vec<Transaction>),
+    IncomingHbMessage(Message<Uuid>),
+    HbInput(Input<Vec<Transaction>, Uuid>),
 }
 
 
@@ -136,11 +147,20 @@ pub struct InternalMessage {
 }
 
 impl InternalMessage {
+    pub fn new(src_uid: Uuid, kind: InternalMessageKind) -> InternalMessage {
+        InternalMessage { src_uid, kind, }
+    }
+
     pub fn wire(src_uid: Uuid, wire_message: WireMessage) -> InternalMessage {
-        InternalMessage {
-            src_uid,
-            kind: InternalMessageKind::Wire(wire_message),
-        }
+        InternalMessage::new(src_uid, InternalMessageKind::Wire(wire_message))
+    }
+
+    pub fn new_transactions(src_uid: Uuid, txns: Vec<Transaction>) -> InternalMessage {
+        InternalMessage::new(src_uid, InternalMessageKind::NewTransactions(txns))
+    }
+
+    pub fn incoming_hb_message(src_uid: Uuid, msg: Message<Uuid>) -> InternalMessage {
+        InternalMessage::new(src_uid, InternalMessageKind::IncomingHbMessage(msg))
     }
 
     pub fn src_uid(&self) -> &Uuid {
@@ -149,6 +169,10 @@ impl InternalMessage {
 
     pub fn kind(&self) -> &InternalMessageKind {
         &self.kind
+    }
+
+    pub fn into_parts(self) -> (Uuid, InternalMessageKind) {
+        (self.src_uid, self.kind)
     }
 }
 
@@ -168,17 +192,6 @@ type InternalTx = mpsc::UnboundedSender<InternalMessage>;
 /// Receive half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type InternalRx = mpsc::UnboundedReceiver<InternalMessage>;
-
-// type PeerTxs = Arc<RwLock<HashMap<SocketAddr, Tx>>>;
-
-/// A serialized message with a sender and the timestamp of arrival.
-#[derive(Eq, PartialEq, Debug)]
-struct TimestampedMessage {
-    time: Duration,
-    sender_id: Uuid,
-    target: Target<Uuid>,
-    message: Vec<u8>,
-}
 
 
 /// A stream/sink of `WireMessage`s connected to a socket.
@@ -279,15 +292,16 @@ impl Peer {
             internal_tx: InternalTx) -> Peer {
         // Get the client socket address
         let addr = wire_messages.socket().peer_addr().unwrap();
+        let uid = Uuid::new_v4();
 
         // Create a channel for this peer
         let (tx, rx) = mpsc::unbounded();
 
         // Add an entry for this `Peer` in the shared state map.
-        let guard = hb.peer_txs.write().unwrap().insert(addr, tx);
+        let guard = hb.peer_txs.write().unwrap().insert(uid, tx);
 
         Peer {
-            uid: Uuid::new_v4(),
+            uid,
             wire_messages,
             hb,
             rx,
@@ -299,9 +313,9 @@ impl Peer {
     /// Sends a message to all connected peers.
     fn wire_to_all(&mut self, msg: &WireMessage) {
         // Now, send the message to all other peers
-        for (addr, tx) in self.hb.peer_txs.read().unwrap().iter() {
+        for (uid, tx) in self.hb.peer_txs.read().unwrap().iter() {
             // Don't send the message to ourselves
-            if *addr != self.addr {
+            if *uid != self.uid {
                 // The send only fails if the rx half has been dropped,
                 // however this is impossible as the `tx` half will be
                 // removed from the map before the `rx` is dropped.
@@ -325,7 +339,6 @@ impl Future for Peer {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<(), Error> {
-        // Ensure the loop can't hog the thread for too long:
         const MESSAGES_PER_TICK: usize = 10;
 
         // Receive all messages from peers.
@@ -338,10 +351,7 @@ impl Future for Peer {
                     // be flushed to the socket (right below).
                     self.wire_messages.start_send(v)?;
 
-                    // If this is the last iteration, the loop will break even
-                    // though there could still be messages to read. Because we did
-                    // not reach `Async::NotReady`, we have to notify ourselves
-                    // in order to tell the executor to schedule the task again.
+                    // Exceeded max messages per tick, schedule notification:
                     if i + 1 == MESSAGES_PER_TICK {
                         task::current().notify();
                     }
@@ -358,10 +368,14 @@ impl Future for Peer {
             trace!("Received message: {:?}", message);
 
             if let Some(msg) = message {
-                match msg.kind() {
-                    WireMessageKind::Hello => error!("Duplicate `WireMessage::Hello` \
+                match msg.into_kind() {
+                    WireMessageKind::Hello(_pub_key) => error!("Duplicate `WireMessage::Hello` \
                         received from '{}'", self.uid),
-                    _ => (),
+                    WireMessageKind::Message(msg) => {
+                        self.internal_tx.unbounded_send(InternalMessage::incoming_hb_message(
+                            self.uid, msg)).unwrap();
+                    },
+                    _ => unimplemented!(),
                 }
             } else {
                 // EOF was reached. The remote client has disconnected. There is
@@ -382,7 +396,13 @@ impl Future for Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
-        self.hb.peer_txs.write().unwrap().remove(&self.addr);
+        self.hb.peer_txs.write().unwrap().remove(&self.uid);
+        // let hb = self.hb.clone();
+
+        // FIXME: Consider simply sending the 'change' input through the
+        // internal channel.
+        self.hb.qhb.write().unwrap().input(Input::Change(Change::Remove(self.uid)))
+            .expect("Error adding new peer to HB");
     }
 }
 
@@ -394,11 +414,14 @@ struct HydrabadgerInner {
     /// Incoming connection socket.
     addr: SocketAddr,
 
+    sk_set: SecretKeySet,
+    pk_set: PublicKeySet,
+
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
-    peer_txs: RwLock<HashMap<SocketAddr, WireTx>>,
+    peer_txs: RwLock<HashMap<Uuid, WireTx>>,
 
     /// Honey badger.
-    dhb: RwLock<QueueingHoneyBadger<Transaction, Uuid>>,
+    qhb: RwLock<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
@@ -418,9 +441,11 @@ pub struct Hydrabadger {
 impl Hydrabadger {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, _value: Option<Vec<u8>>) -> Self {
-        let sk_set = SecretKeySet::random(0, &mut rand::thread_rng());
-        let pk_set = sk_set.public_keys();
         let uid = Uuid::new_v4();
+        // TODO: This needs to be updated based on network size:
+        let sk_threshold = 0;
+        let sk_set = SecretKeySet::random(sk_threshold, &mut rand::thread_rng());
+        let pk_set = sk_set.public_keys();
 
         let node_ids: BTreeSet<_> = iter::once(uid).collect();
 
@@ -431,9 +456,9 @@ impl Hydrabadger {
             pk_set.clone(),
         );
 
-        let dhb = RwLock::new(QueueingHoneyBadger::builder(netinfo)
+        let qhb = RwLock::new(QueueingHoneyBadger::builder(netinfo)
             // Default: 100:
-            .batch_size(50)
+            .batch_size(BATCH_SIZE)
             // Default: 3:
             .max_future_epochs(3)
             .build());
@@ -444,8 +469,10 @@ impl Hydrabadger {
             inner: Arc::new(HydrabadgerInner {
                 uid,
                 addr,
+                sk_set,
+                pk_set,
                 peer_txs: RwLock::new(HashMap::new()),
-                dhb,
+                qhb,
                 peer_internal_tx,
                 peer_out_queue: RwLock::new(VecDeque::new()),
                 batch_out_queue: RwLock::new(VecDeque::new()),
@@ -461,29 +488,104 @@ impl Future for Hydrabadger {
 
     /// Polls the internal message receiver until all txs are dropped.
     fn poll(&mut self) -> Poll<(), Error> {
-        match self.peer_internal_rx.poll() {
-            Ok(Async::Ready(Some(i_msg))) => match i_msg.kind() {
-                InternalMessageKind::Wire(w_msg) => match w_msg.kind() {
-                    WireMessageKind::Hello => {
-                        info!("Adding node ('{}') to honey badger.", i_msg.src_uid);
-                    },
-                    _ => {},
+        // Ensure the loop can't hog the thread for too long:
+        const MESSAGES_PER_TICK: usize = 50;
+
+         // Handle incoming internal messages:
+        for i in 0..MESSAGES_PER_TICK {
+            match self.peer_internal_rx.poll() {
+                Ok(Async::Ready(Some(i_msg))) => {
+                    let (src_uid, w_msg) = i_msg.into_parts();
+                    let mut qhb = self.inner.qhb.write().unwrap();
+                    let epoch = 0; // ?
+                    match w_msg {
+                        InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
+                            WireMessageKind::Hello(pub_key) => {
+                                info!("Adding node ('{}') to honey badger.", src_uid);
+                                // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
+                                qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
+                                    .expect("Error adding new peer to HB");
+                            },
+                            _ => {},
+                        },
+                        InternalMessageKind::NewTransactions(txns) => {
+                            info!("Pushing {} new user transactions to queue.", txns.len());
+                            // let mut qhb = self.inner.qhb.write().unwrap();
+                            qhb.input(Input::User(txns))
+                                .expect("Error inputing transactions into `HoneyBadger`");
+
+                            // Turn the HB crank:
+                            if qhb.queue().len() >= BATCH_SIZE {
+                                ////// KEEPME (FIXME: fix HB error type):
+                                // qhb.propose().map_err(|_err| Error::QhbPropose)?;
+                                //////
+                                qhb.propose().unwrap();
+                            }
+                        },
+                        InternalMessageKind::IncomingHbMessage(msg) => {
+                            info!("Handling incoming message: {:?}", msg);
+                            // let mut qhb = self.inner.qhb.write().unwrap();
+                            qhb.handle_message(&src_uid, msg).unwrap();
+                        },
+                        InternalMessageKind::HbInput(hb_input) => {
+                            qhb.input(hb_input)
+                                .expect("Error inputting to HB");
+                        }
+                    }
+
+                    // Exceeded max messages per tick, schedule notification:
+                    if i + 1 == MESSAGES_PER_TICK {
+                        task::current().notify();
+                    }
                 },
-            },
-            Ok(Async::Ready(None)) => {
-                // The sending ends have all dropped.
-                return Ok(Async::Ready(()));
-            },
-            Ok(Async::NotReady) => {},
-            Err(()) => return Err(Error::HydrabadgerPoll),
-        };
+                Ok(Async::Ready(None)) => {
+                    // The sending ends have all dropped.
+                    return Ok(Async::Ready(()));
+                },
+                Ok(Async::NotReady) => {},
+                Err(()) => return Err(Error::HydrabadgerPoll),
+            };
+        }
+
+        // Get a mutable reference to HB:
+        let mut qhb = self.inner.qhb.write().unwrap();
+
+        // Forward outgoing messages:
+        let peer_txs = self.inner.peer_txs.read().unwrap();
+        for (i, hb_msg) in qhb.message_iter().enumerate() {
+            info!("Forwarding message: {:?}", hb_msg);
+            match hb_msg.target {
+                Target::Node(n_uid) => {
+                    peer_txs.get(&n_uid).unwrap().unbounded_send(
+                        WireMessage::message(hb_msg.message)).unwrap();
+                },
+                Target::All => {
+                    for (n_uid, tx) in peer_txs.iter().filter(|(&uid, _)| uid != self.inner.uid) {
+                        tx.unbounded_send(WireMessage::message(hb_msg.message.clone())).unwrap();
+                    }
+                },
+            }
+
+            // Exceeded max messages per tick, schedule notification:
+            if i + 1 == MESSAGES_PER_TICK {
+                task::current().notify();
+            }
+        }
+
+        // Check for batch outputs:
+        for batch in qhb.output_iter() {
+            // self.batch_out_queue.push_back(txn);
+            info!("BATCH OUTPUT: {:?}", batch);
+        }
 
         Ok(Async::NotReady)
     }
 }
 
 
-fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>) -> impl Future<Item = (), Error = ()> {
+/// Returns a future that handles incoming connections on `socket`.
+fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
+        -> impl Future<Item = (), Error = ()> {
     info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
     let wire_messages = WireMessages::new(socket);
 
@@ -495,11 +597,14 @@ fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>) -> impl Future
             let peer = Peer::new(hb, w_messages, peer_internal_tx.clone());
 
             match msg_opt {
-                Some(msg) => match msg.kind() {
-                    WireMessageKind::Hello => {
-                        peer.internal_tx.unbounded_send(InternalMessage::wire(peer.uid, msg))
+                Some(msg) => match msg.into_kind() {
+                    WireMessageKind::Hello(pub_key) => {
+                        // Relay hello message (this could be simplified).
+                        peer.internal_tx.unbounded_send(
+                                InternalMessage::wire(peer.uid, WireMessage::hello(pub_key)))
                             .map_err(|err| error!("Unable to send on internal tx. \
-                                Internal rx has dropped: {}", err)).unwrap();
+                                Internal rx has dropped: {}", err))
+                            .unwrap();
                     },
                     _ => {
                         error!("Peer connected without sending `WireMessageKind::Hello`.");
@@ -527,7 +632,7 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
 
     let hb = hydrabadger.inner.clone();
     let listen = socket.incoming()
-        .map_err(|err| error!("failed to accept socket; error = {:?}", err))
+        .map_err(|err| error!("Error accepting socket: {:?}", err))
         .for_each(move |socket| {
             tokio::spawn(process_incoming(socket, hb.clone()));
             Ok(())
@@ -544,7 +649,7 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
                     // Wrap the socket with the frame delimiter and codec:
                     let mut wire_messages = WireMessages::new(socket);
 
-                    match wire_messages.send_msg(WireMessage::hello()) {
+                    match wire_messages.send_msg(WireMessage::hello(hb.pk_set.public_key())) {
                         Ok(_) => {
                             let peer_internal_tx = hb.peer_internal_tx.clone();
                             Either::A(Peer::new(hb, wire_messages, peer_internal_tx))
@@ -564,10 +669,20 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
             let peer_txs = hb.peer_txs.read().unwrap();
             trace!("Peer list:");
             for (peer_addr, mut pb) in peer_txs.iter() {
-                trace!("     peer_addr: {}", peer_addr);
-            }
+                trace!("     peer_addr: {}", peer_addr); }
 
-            // TODO: Send txns.
+            let qhb = hb.qhb.read().unwrap();
+            // If no nodes are connected, ignore new transactions:
+            if qhb.dyn_hb().netinfo().num_nodes() > 1 {
+                info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
+                // Send some random transactions to our internal HB instance.
+                let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| Transaction::random(TXN_BYTES)).collect();
+                hb.peer_internal_tx.unbounded_send(
+                    InternalMessage::new_transactions(hb.uid, txns)
+                ).unwrap();
+            } else {
+                info!("No nodes connected...");
+            }
 
             Ok(())
         })
