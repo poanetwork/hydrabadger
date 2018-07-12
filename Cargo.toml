@@ -41,6 +41,8 @@ tokio-serde-bincode = "*"
 bytes = "*"
 uuid = { version = "0.6", features = ["v4", "serde"] }
 byteorder = "*"
+parking_lot = "*"
+clear_on_drop = "*"
 
 [dependencies.hbbft]
 version = "*"

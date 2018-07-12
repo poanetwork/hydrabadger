@@ -2,7 +2,6 @@
 
 extern crate clap;
 extern crate env_logger;
-extern crate crossbeam;
 extern crate hydrabadger;
 extern crate chrono;
 

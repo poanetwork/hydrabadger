@@ -22,6 +22,8 @@ extern crate serde;
 extern crate serde_bytes;
 extern crate bincode;
 extern crate tokio_serde_bincode;
+extern crate parking_lot;
+extern crate clear_on_drop;
 extern crate hbbft;
 
 // pub mod network;
