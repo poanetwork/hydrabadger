@@ -47,7 +47,10 @@ use parking_lot::{RwLock, Mutex};
 use clear_on_drop::ClearOnDrop;
 use hbbft::{
     broadcast::{Broadcast, BroadcastMessage},
-    crypto::{SecretKeySet, poly::Poly, PublicKey, PublicKeySet, SecretKey},
+    crypto::{
+        poly::{Poly, Commitment},
+        SecretKeySet, PublicKey, PublicKeySet, SecretKey
+    },
     messaging::{DistAlgorithm, NetworkInfo, SourcedMessage, Target, TargetedMessage},
     proto::message::BroadcastProto,
     dynamic_honey_badger::Message,
@@ -293,8 +296,8 @@ struct Peer {
     /// Receive half of the message channel.
     rx: WireRx,
 
-    /// Channel to `Hydrabadger`.
-    internal_tx: InternalTx,
+    // /// Channel to `Hydrabadger`.
+    // internal_tx: InternalTx,
 
     /// Peer socket address.
     addr: SocketAddr,
@@ -302,8 +305,7 @@ struct Peer {
 
 impl Peer {
     /// Create a new instance of `Peer`.
-    fn new(uid: Uuid, hb: Arc<HydrabadgerInner>, wire_messages: WireMessages,
-            internal_tx: InternalTx) -> Peer {
+    fn new(uid: Uuid, hb: Arc<HydrabadgerInner>, wire_messages: WireMessages) -> Peer {
         // Get the client socket address
         let addr = wire_messages.socket().peer_addr().unwrap();
         // let uid = Uuid::new_v4();
@@ -319,7 +321,7 @@ impl Peer {
             wire_messages,
             hb,
             rx,
-            internal_tx,
+            // internal_tx,
             addr,
         }
     }
@@ -386,7 +388,7 @@ impl Future for Peer {
                     WireMessageKind::RequestChangeAdd(_uid, _pub_key) => error!("Duplicate `WireMessage::RequestChangeAdd` \
                         received from '{}'", self.uid),
                     WireMessageKind::Message(msg) => {
-                        self.internal_tx.unbounded_send(InternalMessage::incoming_hb_message(
+                        self.hb.peer_internal_tx.unbounded_send(InternalMessage::incoming_hb_message(
                             self.uid, msg)).unwrap();
                     },
                     _ => unimplemented!(),
@@ -418,7 +420,7 @@ impl Drop for Peer {
         // self.hb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
         //     .expect("Error adding new peer to HB");
 
-        self.internal_tx.unbounded_send(InternalMessage::input(self.uid,
+        self.hb.peer_internal_tx.unbounded_send(InternalMessage::input(self.uid,
             Input::Change(Change::Remove(self.uid)))).unwrap();
     }
 }
@@ -441,10 +443,10 @@ enum StateDiscriminant {
 // The current hydrabadger state.
 enum State {
     Disconnected {
-        // sk: SecretKey,
+
     },
     ConnectionPending {
-        // sk: SecretKey,
+        // qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
     },
     ConnectedObserver {
         qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
@@ -459,6 +461,7 @@ enum State {
 }
 
 impl State {
+    /// Returns the state discriminant.
     fn discriminant(&self) -> StateDiscriminant {
         match self {
             State::Disconnected { .. } => StateDiscriminant::Disconnected,
@@ -468,18 +471,12 @@ impl State {
         }
     }
 
+    /// Returns a new `State::Disconnected`.
     fn disconnected() -> State {
         // let sk = SecretKey::rand(&mut rand::thread_rng());
         // let pk = sk.public_key();
         State::Disconnected { /*sk*/ }
     }
-
-    // fn into_connected_pending(self) -> State {
-    //     match self {
-    //         State::Disconnected { /*sk*/ } => State::ConnectionPending { /*sk*/ },
-    //         _ => panic!("Must be disconnected before connecting."),
-    //     }
-    // }
 
     /// Changes the variant (in-place) of this `State` to `ConnectionPending`.
     //
@@ -512,6 +509,16 @@ impl State {
         };
     }
 
+    /// Returns a reference to the internal HB instance.
+    fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uuid>> {
+        match self {
+            State::ConnectedObserver { ref qhb, .. } => qhb.as_ref(),
+            State::ConnectedValidator { ref qhb, .. } => qhb.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the internal HB instance.
     fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<Transaction>, Uuid>> {
         match self {
             State::ConnectedObserver { ref mut qhb, .. } => qhb.as_mut(),
@@ -545,6 +552,8 @@ struct HydrabadgerInner {
     batch_out_queue: RwLock<VecDeque<Batch<Transaction, usize>>>,
 
     unhandled_inputs: RwLock<VecDeque<()>>,
+
+    secret_key: Mutex<Option<ClearOnDrop<Box<SecretKey>>>>,
 }
 
 
@@ -553,7 +562,6 @@ pub struct Hydrabadger {
     inner: Arc<HydrabadgerInner>,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_rx: InternalRx,
-    secret_key: SecretKey,
 }
 
 impl Hydrabadger {
@@ -567,7 +575,7 @@ impl Hydrabadger {
         // let sk = sk_set.secret_key_share(0 as u64);
         // let pk_set = sk_set.public_keys();
 
-        let node_ids: BTreeSet<_> = iter::once(uid).collect();
+        // let node_ids: BTreeSet<_> = iter::once(uid).collect();
 
         // let netinfo = NetworkInfo::new(
         //     uid,
@@ -582,6 +590,8 @@ impl Hydrabadger {
         //     // Default: 3:
         //     .max_future_epochs(3)
         //     .build());
+        let secret_key = Mutex::new(Some(ClearOnDrop::new(Box::new(SecretKey::rand(
+            &mut rand::thread_rng())))));
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
 
@@ -589,19 +599,15 @@ impl Hydrabadger {
             inner: Arc::new(HydrabadgerInner {
                 uid,
                 addr,
-                // keys: Mutex::new(Keys {
-                //     sk,
-                //     pk_set,
-                // }),
                 peer_txs: RwLock::new(HashMap::new()),
                 state: RwLock::new(State::disconnected()),
                 peer_internal_tx,
                 peer_out_queue: RwLock::new(VecDeque::new()),
                 batch_out_queue: RwLock::new(VecDeque::new()),
                 unhandled_inputs: RwLock::new(VecDeque::new()),
+                secret_key,
             }),
             peer_internal_rx,
-            secret_key: SecretKey::rand(&mut rand::thread_rng()),
         }
     }
 
@@ -609,6 +615,83 @@ impl Hydrabadger {
     //     let mut state = self.inner.state.write();
     //     let mut qhb = match state.qhb_mut();
     // }
+
+
+    /// Creates a new hydrabadger instance.
+    fn gen_hb_instance(&self, peer_uid: Uuid, peer_pub_key: PublicKey)
+            -> QueueingHoneyBadger<Vec<Transaction>, Uuid> {
+
+        let node_ids: BTreeSet<_> = iter::once(self.inner.uid).collect();
+        let node_ids = [self.inner.uid, peer_uid].iter().cloned().collect();
+        // TODO: If this is `None`, make a new secret key.
+        let sk = self.inner.secret_key.lock().take().unwrap();
+        let pk_set = Commitment { coeff: vec![sk.public_key().0, peer_pub_key.0] }.into();
+
+        let netinfo = NetworkInfo::new(
+            self.inner.uid,
+            node_ids,
+            sk,
+            pk_set,
+        );
+
+        QueueingHoneyBadger::builder(netinfo)
+            // Default: 100:
+            .batch_size(BATCH_SIZE)
+            // Default: 3:
+            .max_future_epochs(3)
+            .build()
+    }
+
+    fn handle_internal_message(&mut self, i_msg: InternalMessage) {
+        let (src_uid, w_msg) = i_msg.into_parts();
+        let epoch = 0; // ?
+        let mut state = self.inner.state.write();
+
+        match w_msg {
+            InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
+                WireMessageKind::RequestChangeAdd(src_uid, src_pub_key) => {
+                    match state.discriminant() {
+                        StateDiscriminant::Disconnected => {
+                            panic!("Received `WireMessageKind::RequestChangeAdd` when disconnected.");
+                        },
+                        StateDiscriminant::ConnectionPending => {
+                            let qhb = self.gen_hb_instance(src_uid, src_pub_key);
+                            *state = State::ConnectedValidator { qhb: Some(qhb) };
+
+                            // Reply to node with info...
+
+
+                        },
+                        StateDiscriminant::ConnectedObserver | StateDiscriminant::ConnectedValidator => {
+                            let qhb = state.qhb_mut().unwrap();
+                            info!("Change-Adding ('{}') to honey badger.", src_uid);
+                            qhb.input(Input::Change(Change::Add(src_uid, src_pub_key)))
+                                .expect("Error adding new peer to HB");
+                        },
+                    }
+                },
+                _ => {},
+            },
+            InternalMessageKind::NewTransactions(txns) => {
+                // info!("Pushing {} new user transactions to queue.", txns.len());
+                // qhb.input(Input::User(txns))
+                //     .expect("Error inputing transactions into `HoneyBadger`");
+
+                // // Turn the HB crank:
+                // if qhb.queue().len() >= BATCH_SIZE {
+                //     qhb.propose().unwrap();
+                // }
+            },
+            InternalMessageKind::IncomingHbMessage(msg) => {
+                // info!("Handling incoming message: {:?}", msg);
+                // qhb.handle_message(&src_uid, msg).unwrap();
+            },
+            InternalMessageKind::Input(input) => {
+                // qhb.input(input)
+                //     .expect("Error inputting to HB");
+            }
+        }
+    }
 }
 
 impl Future for Hydrabadger {
@@ -617,265 +700,57 @@ impl Future for Hydrabadger {
 
     /// Polls the internal message receiver until all txs are dropped.
     fn poll(&mut self) -> Poll<(), Error> {
-        // // Ensure the loop can't hog the thread for too long:
-        // const MESSAGES_PER_TICK: usize = 50;
+        // Ensure the loop can't hog the thread for too long:
+        const MESSAGES_PER_TICK: usize = 50;
 
-        // // let mut new_state: Option<State> = None;
-        // let mut state = self.inner.state.write();
+         // Handle incoming internal messages:
+        for i in 0..MESSAGES_PER_TICK {
+            match self.peer_internal_rx.poll() {
+                Ok(Async::Ready(Some(i_msg))) => {
+                    self.handle_internal_message(i_msg);
 
-        //  // Handle incoming internal messages:
-        // for i in 0..MESSAGES_PER_TICK {
-        //     match self.peer_internal_rx.poll() {
-        //         Ok(Async::Ready(Some(i_msg))) => {
-        //             let (src_uid, w_msg) = i_msg.into_parts();
-        //             let epoch = 0; // ?
+                    // Exceeded max messages per tick, schedule notification:
+                    if i + 1 == MESSAGES_PER_TICK {
+                        task::current().notify();
+                    }
+                },
+                Ok(Async::Ready(None)) => {
+                    // The sending ends have all dropped.
+                    return Ok(Async::Ready(()));
+                },
+                Ok(Async::NotReady) => {},
+                Err(()) => return Err(Error::HydrabadgerPoll),
+            };
+        }
 
+        // Forward outgoing messages:
+        let peer_txs = self.inner.peer_txs.read();
+        let mut state = self.inner.state.write();
+        for (i, hb_msg) in state.qhb_mut().unwrap().message_iter().enumerate() {
+            info!("Forwarding message: {:?}", hb_msg);
+            match hb_msg.target {
+                Target::Node(n_uid) => {
+                    peer_txs.get(&n_uid).unwrap().unbounded_send(
+                        WireMessage::message(hb_msg.message)).unwrap();
+                },
+                Target::All => {
+                    for (n_uid, tx) in peer_txs.iter().filter(|(&uid, _)| uid != self.inner.uid) {
+                        tx.unbounded_send(WireMessage::message(hb_msg.message.clone())).unwrap();
+                    }
+                },
+            }
 
-        //             match w_msg {
-        //                 InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
-        //                     WireMessageKind::RequestChangeAdd(pub_key) => {
-        //                         info!("Adding node ('{}') to honey badger.", src_uid);
-        //                         // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
-        //                         qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
-        //                             .expect("Error adding new peer to HB");
+            // Exceeded max messages per tick, schedule notification:
+            if i + 1 == MESSAGES_PER_TICK {
+                task::current().notify();
+            }
+        }
 
-
-        //                         *state = match *state {
-        //                             State::Disconnected { sk } => {
-        //                                 State::Disconnected { sk }
-        //                             },
-        //                             s @ _ => s,
-        //                         };
-        //                     },
-        //                     _ => {},
-        //                 },
-        //                 InternalMessageKind::NewTransactions(txns) => {
-        //                     info!("Pushing {} new user transactions to queue.", txns.len());
-        //                     // let mut qhb = self.inner.qhb.write();
-        //                     qhb.input(Input::User(txns))
-        //                         .expect("Error inputing transactions into `HoneyBadger`");
-
-        //                     // Turn the HB crank:
-        //                     if qhb.queue().len() >= BATCH_SIZE {
-        //                         ////// KEEPME (FIXME: fix HB error type):
-        //                         // qhb.propose().map_err(|_err| Error::QhbPropose)?;
-        //                         //////
-        //                         qhb.propose().unwrap();
-        //                     }
-        //                 },
-        //                 InternalMessageKind::IncomingHbMessage(msg) => {
-        //                     info!("Handling incoming message: {:?}", msg);
-        //                     // let mut qhb = self.inner.qhb.write();
-        //                     qhb.handle_message(&src_uid, msg).unwrap();
-        //                 },
-        //                 InternalMessageKind::Input(input) => {
-        //                     qhb.input(input)
-        //                         .expect("Error inputting to HB");
-        //                 }
-        //             }
-
-        //             // match state {
-        //             //     State::Disconnected { .. } => {
-        //             //         match w_msg {
-        //             //             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
-        //             //                 WireMessageKind::RequestChangeAdd(pub_key) => {
-        //             //                     info!("Adding node ('{}') to honey badger.", src_uid);
-        //             //                     // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
-        //             //                     qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
-        //             //                         .expect("Error adding new peer to HB");
-        //             //                 },
-        //             //                 _ => {},
-        //             //             },
-        //             //             InternalMessageKind::NewTransactions(txns) => {
-        //             //                 info!("Pushing {} new user transactions to queue.", txns.len());
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.input(Input::User(txns))
-        //             //                     .expect("Error inputing transactions into `HoneyBadger`");
-
-        //             //                 // Turn the HB crank:
-        //             //                 if qhb.queue().len() >= BATCH_SIZE {
-        //             //                     ////// KEEPME (FIXME: fix HB error type):
-        //             //                     // qhb.propose().map_err(|_err| Error::QhbPropose)?;
-        //             //                     //////
-        //             //                     qhb.propose().unwrap();
-        //             //                 }
-        //             //             },
-        //             //             InternalMessageKind::IncomingHbMessage(msg) => {
-        //             //                 info!("Handling incoming message: {:?}", msg);
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.handle_message(&src_uid, msg).unwrap();
-        //             //             },
-        //             //             InternalMessageKind::Input(input) => {
-        //             //                 qhb.input(input)
-        //             //                     .expect("Error inputting to HB");
-        //             //             }
-        //             //         }
-
-        //             //     },
-        //             //     State::ConnectionPending { .. } => {
-        //             //         match w_msg {
-        //             //             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
-        //             //                 WireMessageKind::RequestChangeAdd(pub_key) => {
-        //             //                     info!("Adding node ('{}') to honey badger.", src_uid);
-        //             //                     // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
-        //             //                     qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
-        //             //                         .expect("Error adding new peer to HB");
-        //             //                 },
-        //             //                 _ => {},
-        //             //             },
-        //             //             InternalMessageKind::NewTransactions(txns) => {
-        //             //                 info!("Pushing {} new user transactions to queue.", txns.len());
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.input(Input::User(txns))
-        //             //                     .expect("Error inputing transactions into `HoneyBadger`");
-
-        //             //                 // Turn the HB crank:
-        //             //                 if qhb.queue().len() >= BATCH_SIZE {
-        //             //                     ////// KEEPME (FIXME: fix HB error type):
-        //             //                     // qhb.propose().map_err(|_err| Error::QhbPropose)?;
-        //             //                     //////
-        //             //                     qhb.propose().unwrap();
-        //             //                 }
-        //             //             },
-        //             //             InternalMessageKind::IncomingHbMessage(msg) => {
-        //             //                 info!("Handling incoming message: {:?}", msg);
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.handle_message(&src_uid, msg).unwrap();
-        //             //             },
-        //             //             InternalMessageKind::Input(input) => {
-
-        //             //                 qhb.input(input)
-        //             //                     .expect("Error inputting to HB");
-        //             //             }
-        //             //         }
-
-        //             //     },
-        //             //     State::ConnectedObserver { qhb, .. } => {
-        //             //         match w_msg {
-        //             //             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
-        //             //                 WireMessageKind::RequestChangeAdd(pub_key) => {
-        //             //                     info!("Adding node ('{}') to honey badger.", src_uid);
-        //             //                     // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
-        //             //                     qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
-        //             //                         .expect("Error adding new peer to HB");
-        //             //                 },
-        //             //                 _ => {},
-        //             //             },
-        //             //             InternalMessageKind::NewTransactions(txns) => {
-        //             //                 info!("Pushing {} new user transactions to queue.", txns.len());
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.input(Input::User(txns))
-        //             //                     .expect("Error inputing transactions into `HoneyBadger`");
-
-        //             //                 // Turn the HB crank:
-        //             //                 if qhb.queue().len() >= BATCH_SIZE {
-        //             //                     ////// KEEPME (FIXME: fix HB error type):
-        //             //                     // qhb.propose().map_err(|_err| Error::QhbPropose)?;
-        //             //                     //////
-        //             //                     qhb.propose().unwrap();
-        //             //                 }
-        //             //             },
-        //             //             InternalMessageKind::IncomingHbMessage(msg) => {
-        //             //                 info!("Handling incoming message: {:?}", msg);
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.handle_message(&src_uid, msg).unwrap();
-        //             //             },
-        //             //             InternalMessageKind::Input(input) => {
-
-        //             //                 qhb.input(input)
-        //             //                     .expect("Error inputting to HB");
-        //             //             }
-        //             //         }
-        //             //     },
-        //             //     State::ConnectedValidator { qhb, .. } => {
-        //             //         match w_msg {
-        //             //             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
-        //             //                 WireMessageKind::RequestChangeAdd(pub_key) => {
-
-
-        //             //                     info!("Adding node ('{}') to honey badger.", src_uid);
-        //             //                     // qhb.handle_message(Message::HoneyBadger(epoch, HbMessage<NodeUid>),)
-        //             //                     qhb.input(Input::Change(Change::Add(src_uid, pub_key)))
-        //             //                         .expect("Error adding new peer to HB");
-        //             //                 },
-        //             //                 _ => {},
-        //             //             },
-        //             //             InternalMessageKind::NewTransactions(txns) => {
-
-        //             //                 info!("Pushing {} new user transactions to queue.", txns.len());
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.input(Input::User(txns))
-        //             //                     .expect("Error inputing transactions into `HoneyBadger`");
-
-        //             //                 // Turn the HB crank:
-        //             //                 if qhb.queue().len() >= BATCH_SIZE {
-        //             //                     ////// KEEPME (FIXME: fix HB error type):
-        //             //                     // qhb.propose().map_err(|_err| Error::QhbPropose)?;
-        //             //                     //////
-        //             //                     qhb.propose().unwrap();
-        //             //                 }
-        //             //             },
-        //             //             InternalMessageKind::IncomingHbMessage(msg) => {
-
-        //             //                 info!("Handling incoming message: {:?}", msg);
-        //             //                 // let mut qhb = self.inner.qhb.write();
-        //             //                 qhb.handle_message(&src_uid, msg).unwrap();
-        //             //             },
-        //             //             InternalMessageKind::Input(input) => {
-
-        //             //                 qhb.input(input)
-        //             //                     .expect("Error inputting to HB");
-        //             //             }
-        //             //         }
-
-        //             //     },
-        //             // }
-
-        //             // Exceeded max messages per tick, schedule notification:
-        //             if i + 1 == MESSAGES_PER_TICK {
-        //                 task::current().notify();
-        //             }
-        //         },
-        //         Ok(Async::Ready(None)) => {
-        //             // The sending ends have all dropped.
-        //             return Ok(Async::Ready(()));
-        //         },
-        //         Ok(Async::NotReady) => {},
-        //         Err(()) => return Err(Error::HydrabadgerPoll),
-        //     };
-
-        //     // if let Some(state) = new_state {
-
-        //     // }
-        // }
-
-        // // Forward outgoing messages:
-        // let peer_txs = self.inner.peer_txs.read();
-        // for (i, hb_msg) in qhb.message_iter().enumerate() {
-        //     info!("Forwarding message: {:?}", hb_msg);
-        //     match hb_msg.target {
-        //         Target::Node(n_uid) => {
-        //             peer_txs.get(&n_uid).unwrap().unbounded_send(
-        //                 WireMessage::message(hb_msg.message)).unwrap();
-        //         },
-        //         Target::All => {
-        //             for (n_uid, tx) in peer_txs.iter().filter(|(&uid, _)| uid != self.inner.uid) {
-        //                 tx.unbounded_send(WireMessage::message(hb_msg.message.clone())).unwrap();
-        //             }
-        //         },
-        //     }
-
-        //     // Exceeded max messages per tick, schedule notification:
-        //     if i + 1 == MESSAGES_PER_TICK {
-        //         task::current().notify();
-        //     }
-        // }
-
-        // // Check for batch outputs:
-        // for batch in qhb.output_iter() {
-        //     // self.batch_out_queue.push_back(txn);
-        //     info!("BATCH OUTPUT: {:?}", batch);
-        // }
+        // Check for batch outputs:
+        for output in state.qhb_mut().unwrap().output_iter() {
+            // self.batch_out_queue.push_back(txn);
+            info!("BATCH OUTPUT: {:?}", output);
+        }
 
         Ok(Async::NotReady)
     }
@@ -892,16 +767,23 @@ fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
         .map_err(|(e, _)| e)
         .and_then(move |(msg_opt, w_messages)| {
             let hb = hb.clone();
-            let peer_internal_tx = hb.peer_internal_tx.clone();
+            // let peer_internal_tx = hb.peer_internal_tx.clone();
 
             match msg_opt {
                 Some(msg) => match msg.into_kind() {
                     WireMessageKind::RequestChangeAdd(uid, pub_key) => {
-                        let peer = Peer::new(uid, hb, w_messages, peer_internal_tx.clone());
+                        if let StateDiscriminant::Disconnected = hb.state.read().discriminant() {
+                            // Set this so that the HB will be created:
+                            hb.state.write().set_connection_pending();
+                        }
 
-                        // Relay request_change_add message (this could be simplified into a new msg variant).
-                        peer.internal_tx.unbounded_send(
-                                InternalMessage::wire(peer.uid, WireMessage::request_change_add(uid, pub_key)))
+                        let peer = Peer::new(uid, hb, w_messages);
+
+                        // Relay request_change_add message (this could be
+                        // simplified into a new msg variant).
+                        peer.hb.peer_internal_tx.unbounded_send(
+                                InternalMessage::wire(peer.uid,
+                                    WireMessage::request_change_add(uid, pub_key)))
                             .map_err(|err| error!("Unable to send on internal tx. \
                                 Internal rx has dropped: {}", err))
                             .unwrap();
@@ -909,7 +791,8 @@ fn process_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
                         Either::B(peer)
                     },
                     _ => {
-                        error!("Peer connected without sending `WireMessageKind::RequestChangeAdd`.");
+                        error!("Peer connected without sending \
+                            `WireMessageKind::RequestChangeAdd`.");
                         Either::A(future::ok(()))
                     },
                 },
@@ -938,7 +821,7 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
             Ok(())
         });
 
-    let pk = hydrabadger.secret_key.public_key();
+    let pk = hydrabadger.inner.secret_key.lock().as_ref().unwrap().public_key();
     let uid = hydrabadger.inner.uid.clone();
     let hb = hydrabadger.inner.clone();
     let connect = future::lazy(move || {
@@ -953,13 +836,12 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
 
                     match wire_messages.send_msg(WireMessage::request_change_add(uid, pk.clone())) {
                         Ok(_) => {
-                            let uid = Uuid::new_v4();
-                            let peer_internal_tx = hb.peer_internal_tx.clone();
-
                             // Set our state appropriately:
                             hb.state.write().set_connection_pending();
 
-                            Either::A(Peer::new(uid, hb, wire_messages, peer_internal_tx))
+                            // let uid = hb.uid;
+
+                            Either::A(Peer::new(uid, hb, wire_messages))
                         },
                         Err(err) => Either::B(future::err(err)),
                     }
@@ -978,18 +860,22 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
             for (peer_addr, mut pb) in peer_txs.iter() {
                 trace!("     peer_addr: {}", peer_addr); }
 
-            // let qhb = hb.qhb.read();
-            // // If no nodes are connected, ignore new transactions:
-            // if qhb.dyn_hb().netinfo().num_nodes() > 1 {
-            //     info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
-            //     // Send some random transactions to our internal HB instance.
-            //     let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| Transaction::random(TXN_BYTES)).collect();
-            //     hb.peer_internal_tx.unbounded_send(
-            //         InternalMessage::new_transactions(hb.uid, txns)
-            //     ).unwrap();
-            // } else {
-            //     info!("No nodes connected...");
-            // }
+            if let Some(qhb) = &hb.state.read().qhb() {
+                // If no nodes are connected, ignore new transactions:
+                // if qhb.dyn_hb().netinfo().num_nodes() > 1 {
+                    info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
+                    // Send some random transactions to our internal HB instance.
+                    let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| Transaction::random(TXN_BYTES)).collect();
+                    hb.peer_internal_tx.unbounded_send(
+                        InternalMessage::new_transactions(hb.uid, txns)
+                    ).unwrap();
+                // } else {
+                //     error!("No nodes connected. Panicking...");
+                //     panic!("Invalid state");
+                // }
+            } else {
+                info!("Not connected.");
+            }
 
             Ok(())
         })
