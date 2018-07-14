@@ -41,7 +41,7 @@ use serde::{Serializer, Deserializer, Serialize, Deserialize};
 use serde_bytes;
 use bincode::{self, serialize_into, deserialize_from, serialize, deserialize};
 use tokio_serde_bincode::{ReadBincode, WriteBincode};
-use parking_lot::{RwLock, Mutex};
+use parking_lot::{RwLock, Mutex, RwLockReadGuard, RwLockWriteGuard};
 use clear_on_drop::ClearOnDrop;
 use hbbft::{
     broadcast::{Broadcast, BroadcastMessage},
@@ -125,7 +125,7 @@ pub enum Error {
     #[fail(display = "Serde error: {}", _0)]
     Serde(bincode::Error),
     #[fail(display = "Error polling hydrabadger internal receiver")]
-    HydrabadgerPoll,
+    HydrabadgerHandlerPoll,
     // FIXME: Make honeybadger error thread safe.
     #[fail(display = "QueuingHoneyBadger propose error")]
     QhbPropose,
@@ -191,12 +191,12 @@ pub struct WireMessage {
 
 impl WireMessage {
     /// Returns a `HelloRequestChangeAdd` variant.
-    pub fn request_change_add(uid: Uuid, in_addr: InAddr, pub_key: PublicKey) -> WireMessage {
+    pub fn hello_request_change_add(uid: Uuid, in_addr: InAddr, pub_key: PublicKey) -> WireMessage {
         WireMessage { kind: WireMessageKind::HelloRequestChangeAdd(uid, in_addr, pub_key), }
     }
 
     /// Returns a `WelcomeReceivedChangeAdd` variant.
-    pub fn received_change_add(uid: Uuid, net_state: NetworkState) -> WireMessage {
+    pub fn welcome_received_change_add(uid: Uuid, net_state: NetworkState) -> WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, net_state) }
     }
 
@@ -225,6 +225,7 @@ pub enum InternalMessageKind {
     IncomingHbMessage(Message<Uuid>),
     Input(Input<Vec<Transaction>, Uuid>),
     PeerDisconnect,
+    // NewOutgoingConnection,
 }
 
 
@@ -240,6 +241,13 @@ impl InternalMessage {
     pub fn new(src_uid: Uuid, src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
         InternalMessage { src_uid, kind, src_addr}
     }
+
+    // /// Returns a new `InternalMessage` with a default uid.
+    // //
+    // // TODO: Do something safer.
+    // pub fn new_without_uid(src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
+    //     InternalMessage::new(Uuid::default(), src_addr, kind)
+    // }
 
     pub fn wire(src_uid: Uuid, src_addr: OutAddr, wire_message: WireMessage) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::Wire(wire_message))
@@ -260,6 +268,10 @@ impl InternalMessage {
     pub fn peer_disconnect(src_uid: Uuid, src_addr: OutAddr) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::PeerDisconnect)
     }
+
+    // pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage {
+    //     InternalMessage::new_without_uid(src_addr, InternalMessageKind::NewOutgoingConnection)
+    // }
 
     /// Returns the source unique identifier this message was received in.
     pub fn src_uid(&self) -> &Uuid {
@@ -357,7 +369,7 @@ impl Sink for WireMessages {
 
 
 /// The state for each connected client.
-struct Peer {
+struct PeerHandler {
     // Peer uid.
     uid: Option<Uuid>,
 
@@ -366,7 +378,7 @@ struct Peer {
 
     /// Handle to the shared message state.
     // txs: PeerTxs,
-    hb: Arc<HydrabadgerInner>,
+    hdb: Hydrabadger,
 
     // TODO: Consider adding back a separate clone of `peer_internal_tx`. Is
     // there any difference if capacity isn't an issue?
@@ -378,9 +390,9 @@ struct Peer {
     addr: OutAddr,
 }
 
-impl Peer {
+impl PeerHandler {
     /// Create a new instance of `Peer`.
-    fn new(uid: Option<Uuid>, hb: Arc<HydrabadgerInner>, wire_messages: WireMessages) -> Peer {
+    fn new(uid: Option<Uuid>, mut hdb: Hydrabadger, wire_messages: WireMessages) -> PeerHandler {
         // Get the client socket address
         let addr = OutAddr(wire_messages.socket().peer_addr().unwrap());
         // let uid = Uuid::new_v4();
@@ -389,12 +401,12 @@ impl Peer {
         let (tx, rx) = mpsc::unbounded();
 
         // Add an entry for this `Peer` in the shared state map.
-        let guard = hb.peer_txs.write().insert(addr, tx);
+        let guard = hdb.peers_mut().insert(addr, tx);
 
-        Peer {
+        PeerHandler {
             uid,
             wire_messages,
-            hb,
+            hdb,
             rx,
             // internal_tx,
             addr,
@@ -404,7 +416,7 @@ impl Peer {
     /// Sends a message to all connected peers.
     fn wire_to_all(&mut self, msg: &WireMessage) {
         // Now, send the message to all other peers
-        for (p_addr, tx) in self.hb.peer_txs.read().iter() {
+        for (p_addr, tx) in self.hdb.peers().iter() {
             // Don't send the message to ourselves
             if *p_addr != self.addr {
                 // The send only fails if the rx half has been dropped,
@@ -417,14 +429,14 @@ impl Peer {
 
     /// Sends a hello response (welcome).
     fn wire_welcome_received_change_add(&self, net_state: NetworkState) {
-        self.hb.peer_txs.read().get(&self.addr).unwrap()
-            .unbounded_send(WireMessage::received_change_add(self.uid.clone().unwrap(), net_state))
+        self.hdb.peers().get(&self.addr).unwrap()
+            .unbounded_send(WireMessage::welcome_received_change_add(self.uid.clone().unwrap(), net_state))
             .unwrap();
     }
 }
 
 /// A future representing the client connection.
-impl Future for Peer {
+impl Future for PeerHandler {
     type Item = ();
     type Error = Error;
 
@@ -463,17 +475,21 @@ impl Future for Peer {
                         error!("Duplicate `WireMessage::HelloRequestChangeAdd` \
                             received from '{}'", src_uid);
                     },
-                    WireMessageKind::WelcomeReceivedChangeAdd(src_uid, _pub_key_set) => {
+                    WireMessageKind::WelcomeReceivedChangeAdd(src_uid, net_state) => {
                         self.uid = Some(src_uid);
-                        // FIXME: Do something with the pk_set
-
+                        self.hdb.send_internal(
+                            InternalMessage::wire(src_uid, self.addr,
+                                WireMessage::welcome_received_change_add(src_uid, net_state)
+                            )
+                        );
                     },
                     WireMessageKind::Message(msg) => {
                         let uid = self.uid.clone()
                             .expect("`WireMessageKind::Message` received before \
                                 `WireMessageKind::WelcomeReceivedChangeAdd`");
-                        self.hb.peer_internal_tx.unbounded_send(
-                            InternalMessage::incoming_hb_message(uid, self.addr, msg)).unwrap();
+                        self.hdb.send_internal(
+                            InternalMessage::incoming_hb_message(uid, self.addr, msg)
+                        )
                     },
                     _ => unimplemented!(),
                 }
@@ -494,33 +510,43 @@ impl Future for Peer {
     }
 }
 
-impl Drop for Peer {
+impl Drop for PeerHandler {
     fn drop(&mut self) {
         debug!("Removing peer ({}: '{}') from the list of txs.",
             self.addr, self.uid.clone().unwrap());
-        // Remove peer transmitter from the list:
-        self.hb.peer_txs.write().remove(&self.addr);
+        // Remove peer transmitter from the lists:
+        self.hdb.peers_mut().remove(&self.addr);
 
         // // FIXME: Consider simply sending the 'change' input through the
         // // internal channel.
-        // self.hb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
+        // self.hdb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
         //     .expect("Error adding new peer to HB");
         if let Some(uid) = self.uid.clone() {
             debug!("Sending peer ({}: '{}') disconnect internal message.",
                 self.addr, self.uid.clone().unwrap());
 
-            // self.hb.peer_internal_tx.unbounded_send(InternalMessage::input(
+            // self.hdb.peer_internal_tx.unbounded_send(InternalMessage::input(
             //     uid, self.addr, Input::Change(Change::Remove(uid)))).unwrap();
 
-            self.hb.peer_internal_tx.unbounded_send(InternalMessage::peer_disconnect(
-                uid, self.addr)).unwrap()
+            self.hdb.send_internal(InternalMessage::peer_disconnect(
+                uid, self.addr));
         }
     }
 }
 
 
+/// Nodes of the network.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Peer {
+    in_addr: InAddr,
+    uid: Option<Uuid>,
+    out_addr: Option<OutAddr>,
+    pk: Option<PublicKey>,
+}
+
+
 /// A peer on the list of awaiting nodes.
-struct AwaitingPeerInfo {
+pub(crate) struct AwaitingPeerInfo {
     out_addr: OutAddr,
     info: NetworkNodeInfo,
 }
@@ -581,7 +607,7 @@ fn gen_qhb_instance(
 #[derive(Copy, Clone, Debug)]
 enum StateDsct {
     Disconnected,
-    ConnectionPending,
+    ConnectionPending(usize),
     ConnectedAwaitingMorePeers(usize),
     ConnectedObserver,
     ConnectedValidator,
@@ -589,7 +615,7 @@ enum StateDsct {
 
 
 // The current hydrabadger state.
-enum State {
+pub(crate) enum State {
     Disconnected {
         local_uid: Uuid,
         local_addr: InAddr,
@@ -600,12 +626,13 @@ enum State {
         local_uid: Uuid,
         local_addr: InAddr,
         secret_key: Option<ClearOnDrop<Box<SecretKey>>>,
+        count: usize,
     },
     ConnectedAwaitingMorePeers {
         local_uid: Uuid,
         local_addr: InAddr,
-        peers: Option<Vec<AwaitingPeerInfo>>,
         secret_key: Option<ClearOnDrop<Box<SecretKey>>>,
+        peers: Option<Vec<AwaitingPeerInfo>>,
     },
     ConnectedObserver {
         qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
@@ -624,7 +651,7 @@ impl State {
     fn discriminant(&self) -> StateDsct {
         match self {
             State::Disconnected { .. } => StateDsct::Disconnected,
-            State::ConnectionPending { .. } => StateDsct::ConnectionPending,
+            State::ConnectionPending { count, .. } => StateDsct::ConnectionPending(*count),
             State::ConnectedAwaitingMorePeers { ref peers, .. } => {
                 StateDsct::ConnectedAwaitingMorePeers(peers.as_ref().unwrap().len())
             },
@@ -636,8 +663,6 @@ impl State {
     /// Returns a new `State::Disconnected`.
     fn disconnected(local_uid: Uuid, local_addr: InAddr,
             secret_key: ClearOnDrop<Box<SecretKey>>) -> State {
-        // let sk = SecretKey::rand(&mut rand::thread_rng());
-        // let pk = sk.public_key();
         State::Disconnected { local_uid, local_addr, secret_key: Some(secret_key) }
     }
 
@@ -645,6 +670,7 @@ impl State {
     fn set_connected_awaiting_more_peers(&mut self, peers: Vec<AwaitingPeerInfo>) {
         *self = match *self {
             State::Disconnected { local_uid, local_addr, ref mut secret_key } => {
+                info!("Setting state: `ConnectedAwaitingMorePeers`.");
                 State::ConnectedAwaitingMorePeers { local_uid, local_addr,
                     secret_key: secret_key.take(), peers: Some(peers) }
             },
@@ -668,8 +694,13 @@ impl State {
                     let qhb = gen_qhb_instance(local_uid, local_addr, sk, prs);
                     State::ConnectedValidator { qhb: Some(qhb) }
                 } else {
+                    info!("Setting state: `ConnectedAwaitingMorePeers`.");
                     State::ConnectedAwaitingMorePeers {
-                        local_uid, local_addr, secret_key: secret_key.take(), peers: Some(prs) }
+                        local_uid,
+                        local_addr,
+                        secret_key: secret_key.take(),
+                        peers: Some(prs)
+                    }
                 }
 
             },
@@ -680,9 +711,10 @@ impl State {
     /// Adds an awaiting peer and changes the network state appropriately when
     /// enough peers are added.
     fn remove_awaiting_peer(&mut self, uid: Uuid, out_addr: OutAddr) {
-        match self {
-            State::ConnectedAwaitingMorePeers { ref mut peers, .. } => {
-                let mut prs = peers.as_mut().expect("Peer list gone!");
+        *self = match *self {
+            State::ConnectedAwaitingMorePeers {
+                    local_uid, local_addr, ref mut secret_key, ref mut peers } => {
+                let mut prs = peers.take().expect("Peer list gone!");
                 // prs.remove(peer_info);
                 let start_len = prs.len();
                 prs.retain(|p_info| {
@@ -694,11 +726,20 @@ impl State {
                 debug!("Peer ({}: '{}') removed from await list.", out_addr, uid);
 
                 if prs.len() == 0 {
-                    // Change state back to Disconnected?
+                    info!("Setting state: `Disconnected`.");
+                    State::Disconnected {
+                        local_uid,
+                        local_addr,
+                        secret_key: secret_key.take()
+                    }
                 } else {
-                    // ?
+                    State::ConnectedAwaitingMorePeers {
+                        local_uid,
+                        local_addr,
+                        secret_key: secret_key.take(),
+                        peers: Some(prs),
+                    }
                 }
-
             },
             _ => panic!("Must be awaiting more peers to remove a peer."),
         }
@@ -707,13 +748,55 @@ impl State {
     /// Changes the variant (in-place) of this `State` to `ConnectionPending`.
     //
     // TODO: Add proper error handling:
-    fn set_connection_pending(&mut self) {
+    fn set_connection_pending(&mut self, count: usize) {
         *self = match *self {
             State::Disconnected { local_uid, local_addr, ref mut secret_key, } => {
-                State::ConnectionPending { local_uid, local_addr, secret_key: secret_key.take() }
+                info!("Setting state: `ConnectionPending`.");
+                State::ConnectionPending {
+                    local_uid,
+                    local_addr,
+                    secret_key: secret_key.take(),
+                    count,
+                }
             },
             _ => panic!("Must be disconnected before connecting."),
         };
+    }
+
+    /// Sets state to `ConnectionPending` or increases pending connection
+    /// count, otherwise does nothing.
+    fn outgoing_connection_added(&mut self) {
+        let dsct = self.discriminant();
+        match dsct {
+            StateDsct::Disconnected => self.set_connection_pending(1),
+            _ => match self {
+                State::ConnectionPending { ref mut count, .. } => {
+                    *count += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Decreases pending connection count or sets state to `Disconnected`,
+    /// otherwise does nothing.
+    fn outgoing_connection_dropped(&mut self) {
+        let mut set_disconnected = false;
+        match self {
+            State::ConnectionPending { ref mut count, .. } => {
+                *count -= 1;
+                if *count == 0 { set_disconnected = true; }
+            },
+            _ => {},
+        }
+        if set_disconnected {
+            *self = match *self {
+                State::ConnectionPending { local_uid, local_addr, ref mut secret_key, .. } => {
+                    State::Disconnected { local_uid, local_addr, secret_key: secret_key.take() }
+                },
+                _ => unreachable!(),
+            }
+        }
     }
 
     /// Changes the variant (in-place) of this `State` to `ConnectedObserver`.
@@ -737,6 +820,22 @@ impl State {
         };
     }
 
+    /// Returns the network state, if possible.
+    fn network_state(&self) -> Option<NetworkState> {
+        match self {
+            State::ConnectedAwaitingMorePeers { peers, .. } => {
+                peers.as_ref().map(|ps| {
+                    NetworkState::AwaitingMorePeers(
+                        ps.iter().map(|p| p.info.clone()).collect()
+                    )
+                })
+            },
+            State::ConnectedObserver { .. } => unimplemented!(),
+            State::ConnectedValidator { .. } => unimplemented!(),
+            _ => None,
+        }
+    }
+
     /// Returns a reference to the internal HB instance.
     fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uuid>> {
         match self {
@@ -755,6 +854,7 @@ impl State {
         }
     }
 
+    /// Returns the public key for the local node.
     fn local_public_key(&self) -> PublicKey {
         match self {
             State::Disconnected { secret_key, .. }
@@ -771,7 +871,7 @@ impl State {
 }
 
 
-/// The `Arc`-wrapped portion of `Hydrabadger`.
+/// The `Arc` wrapped portion of `Hydrabadger`.
 ///
 /// Shared all over the place.
 struct HydrabadgerInner {
@@ -780,7 +880,7 @@ struct HydrabadgerInner {
     /// Incoming connection socket.
     addr: InAddr,
 
-    peer_txs: RwLock<HashMap<OutAddr, WireTx>>,
+    peers: RwLock<HashMap<OutAddr, WireTx>>,
 
     peer_out_addrs: RwLock<HashMap<Uuid, OutAddr>>,
 
@@ -797,63 +897,43 @@ struct HydrabadgerInner {
 }
 
 impl HydrabadgerInner {
-
+    /// Sends a message on the internal tx.
+    fn send_internal(&self, msg: InternalMessage) {
+        self.peer_internal_tx.unbounded_send(msg)
+            .expect("Unable to send on internal tx. Internal rx has dropped");
+    }
 }
 
 
 /// The core API for creation of and event handling for a `HoneyBadger` instance.
-pub struct Hydrabadger {
-    inner: Arc<HydrabadgerInner>,
+pub struct HydrabadgerHandler {
+    hdb: Hydrabadger,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_rx: InternalRx,
 }
 
-impl Hydrabadger {
-    /// Returns a new Hydrabadger node.
-    pub fn new(addr: SocketAddr, _value: Option<Vec<u8>>) -> Self {
-        let uid = Uuid::new_v4();
-        let secret_key = ClearOnDrop::new(Box::new(SecretKey::rand(
-            &mut rand::thread_rng())));
-
-        let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
-
-        Hydrabadger {
-            inner: Arc::new(HydrabadgerInner {
-                uid,
-                addr: InAddr(addr),
-                peer_txs: RwLock::new(HashMap::new()),
-                peer_out_addrs: RwLock::new(HashMap::new()),
-                state: RwLock::new(State::disconnected(uid, InAddr(addr), secret_key)),
-                peer_internal_tx,
-                peer_out_queue: RwLock::new(VecDeque::new()),
-                batch_out_queue: RwLock::new(VecDeque::new()),
-                unhandled_inputs: RwLock::new(VecDeque::new()),
-            }),
-            peer_internal_rx,
-        }
-    }
-
-    /// Returns this node's local key.
-    pub fn local_public_key(&self) -> PublicKey {
-        self.inner.state.read().local_public_key()
-    }
-
+impl HydrabadgerHandler {
     fn handle_internal_message(&mut self, i_msg: InternalMessage) {
         let (src_uid, src_addr, w_msg) = i_msg.into_parts();
-        // let epoch = 0; // ?
 
-        trace!("Hydrabadger::handle_internal_message: Locking state for writing...");
-        let mut state = self.inner.state.write();
-        trace!("Hydrabadger::handle_internal_message: State locked for writing.");
+        trace!("HydrabadgerHandler::handle_internal_message: Locking state for writing...");
+        let mut state = self.hdb.state_mut();
+        trace!("HydrabadgerHandler::handle_internal_message: State locked for writing.");
 
         match w_msg {
+            // InternalMessageKind::NewOutgoingConnection => {
+            //     // NOTE: In this case `src_uid` is a default and must not be used!
+            //     match state.discriminant() {
+            //         _ => unimplemented!(),
+            //     }
+            // }
             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
                 WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, src_pub_key) => {
                     match state.discriminant() {
                         StateDsct::Disconnected => {
                             panic!("Received `WireMessageKind::HelloRequestChangeAdd` while disconnected.");
                         },
-                        StateDsct::ConnectionPending => {
+                        StateDsct::ConnectionPending(_count) => {
                             panic!("Received `WireMessageKind::HelloRequestChangeAdd` while \
                                 `StateDsct::ConnectionPending`.");
                         },
@@ -873,6 +953,7 @@ impl Hydrabadger {
                     }
                 },
                 WireMessageKind::WelcomeReceivedChangeAdd( .. ) => {
+                    // TODO: Add new peer to `peer_out_addrs`!
                     // TODO: Handle
                 },
                 _ => {},
@@ -897,11 +978,12 @@ impl Hydrabadger {
             }
 
             InternalMessageKind::PeerDisconnect => {
+                // TODO: REMOVE peer from `peer_out_addrs`!
                 match state.discriminant() {
                     StateDsct::Disconnected => {
                         panic!("Received `WireMessageKind::PeerDisconnect` while disconnected.");
                     },
-                    StateDsct::ConnectionPending => {
+                    StateDsct::ConnectionPending(_count) => {
                         unimplemented!();
                     },
                     StateDsct::ConnectedAwaitingMorePeers(_peer_count) => {
@@ -915,25 +997,25 @@ impl Hydrabadger {
             }
         }
 
-        trace!("Hydrabadger::handle_internal_message: State unlocked for writing.");
+        trace!("HydrabadgerHandler::handle_internal_message: State unlocked for writing.");
     }
 
     fn handle_hb_message(&mut self) {
-        trace!("Hydrabadger::handle_hb_message: Locking state for writing...");
-        let mut state = self.inner.state.write();
-        trace!("Hydrabadger::handle_hb_message: State locked for writing.");
+        trace!("HydrabadgerHandler::handle_hb_message: Locking state for writing...");
+        let mut state = self.hdb.state_mut();
+        trace!("HydrabadgerHandler::handle_hb_message: State locked for writing.");
 
     }
 
     fn handle_output(&mut self) {
-        trace!("Hydrabadger::handle_output: Locking state for writing...");
-        let mut state = self.inner.state.write();
-        trace!("Hydrabadger::handle_output: State locked for writing.");
+        trace!("HydrabadgerHandler::handle_output: Locking state for writing...");
+        let mut state = self.hdb.state_mut();
+        trace!("HydrabadgerHandler::handle_output: State locked for writing.");
 
     }
 }
 
-impl Future for Hydrabadger {
+impl Future for HydrabadgerHandler {
     type Item = ();
     type Error = Error;
 
@@ -955,34 +1037,35 @@ impl Future for Hydrabadger {
                 },
                 Ok(Async::Ready(None)) => {
                     // The sending ends have all dropped.
+                    info!("Shutting down HydrabadgerHandler...");
                     return Ok(Async::Ready(()));
                 },
                 Ok(Async::NotReady) => {},
-                Err(()) => return Err(Error::HydrabadgerPoll),
+                Err(()) => return Err(Error::HydrabadgerHandlerPoll),
             };
         }
 
         // Forward outgoing messages:
-        trace!("Hydrabadger::poll: Locking state for writing...");
-        let mut state = self.inner.state.write();
-        trace!("Hydrabadger::poll: State locked for writing.");
+        trace!("HydrabadgerHandler::poll: Locking state for writing...");
+        let mut state = self.hdb.inner.state.write();
+        trace!("HydrabadgerHandler::poll: State locked for writing.");
 
         if let Some(qhb) = state.qhb_mut() {
-            let peer_txs = self.inner.peer_txs.read();
-            let peer_out_addrs = self.inner.peer_out_addrs.read();
+            let peer_txs = self.hdb.peers();
+            let peer_out_addrs = self.hdb.inner.peer_out_addrs.read();
 
             for (i, hb_msg) in qhb.message_iter().enumerate() {
                 info!("Forwarding message: {:?}", hb_msg);
                 match hb_msg.target {
                     Target::Node(p_uid) => {
                         let p_addr = peer_out_addrs.get(&p_uid)
-                            .expect("Hydrabadger::poll: No peer address inserted.");
+                            .expect("HydrabadgerHandler::poll: No peer address inserted.");
                         peer_txs.get(&p_addr).unwrap().unbounded_send(
                             WireMessage::message(hb_msg.message)).unwrap();
                     },
                     Target::All => {
                         for (p_addr, tx) in peer_txs.iter()
-                                .filter(|(&p_addr, _)| p_addr != OutAddr(*self.inner.addr)) {
+                                .filter(|(&p_addr, _)| p_addr != OutAddr(*self.hdb.inner.addr)) {
                             tx.unbounded_send(WireMessage::message(hb_msg.message.clone())).unwrap();
                         }
                     },
@@ -1001,10 +1084,86 @@ impl Future for Hydrabadger {
             }
         }
 
-        trace!("Hydrabadger::poll: State unlocked for writing.");
+        trace!("HydrabadgerHandler::poll: State unlocked for writing.");
         Ok(Async::NotReady)
     }
 }
+
+
+#[derive(Clone)]
+pub struct Hydrabadger {
+    inner: Arc<HydrabadgerInner>,
+    handler: Arc<Mutex<Option<HydrabadgerHandler>>>,
+}
+
+impl Hydrabadger {
+    /// Returns a new Hydrabadger node.
+    pub fn new(addr: SocketAddr) -> Self {
+        let uid = Uuid::new_v4();
+        let secret_key = ClearOnDrop::new(Box::new(SecretKey::rand(
+            &mut rand::thread_rng())));
+
+        let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
+
+        let inner = Arc::new(HydrabadgerInner {
+            uid,
+            addr: InAddr(addr),
+            peers: RwLock::new(HashMap::new()),
+            peer_out_addrs: RwLock::new(HashMap::new()),
+            state: RwLock::new(State::disconnected(uid, InAddr(addr), secret_key)),
+            peer_internal_tx,
+            peer_out_queue: RwLock::new(VecDeque::new()),
+            batch_out_queue: RwLock::new(VecDeque::new()),
+            unhandled_inputs: RwLock::new(VecDeque::new()),
+        });
+
+        let hdb = Hydrabadger {
+            inner,
+            handler: Arc::new(Mutex::new(None)),
+        };
+
+        let handler = HydrabadgerHandler {
+            hdb: hdb.clone(),
+            peer_internal_rx,
+        };
+
+        *hdb.handler.lock() = Some(handler);
+
+        hdb
+    }
+
+    /// Returns the pre-created handler.
+    pub fn handler(&mut self) -> Option<HydrabadgerHandler> {
+        self.handler.lock().take()
+    }
+
+    /// Returns a reference to the inner state.
+    pub(crate) fn state(&self) -> RwLockReadGuard<State> {
+        self.inner.state.read()
+    }
+
+    /// Returns a mutable reference to the inner state.
+    pub(crate) fn state_mut(&mut self) -> RwLockWriteGuard<State> {
+        self.inner.state.write()
+    }
+
+    /// Returns a reference to the peers list.
+    pub(crate) fn peers(&self) -> RwLockReadGuard<HashMap<OutAddr, WireTx>> {
+        self.inner.peers.read()
+    }
+
+    /// Returns a mutable reference to the peers list.
+    pub(crate) fn peers_mut(&mut self) -> RwLockWriteGuard<HashMap<OutAddr, WireTx>> {
+        self.inner.peers.write()
+    }
+
+    /// Sends a message on the internal tx.
+    fn send_internal(&self, msg: InternalMessage) {
+        self.inner.peer_internal_tx.unbounded_send(msg)
+            .expect("Unable to send on internal tx. Internal rx has dropped");
+    }
+}
+
 
 
 /// Handles a `WireMessageKind::HelloRequestChangeAdd`.
@@ -1014,31 +1173,20 @@ impl Future for Hydrabadger {
 ///
 /// If enough peers connect, create a new HB instance and promote to validator
 /// (`ConnectedValidator`) immediately (i.e. root bootnode).
-fn handle_incoming_hello(hb: Arc<HydrabadgerInner>, peer_uid: Uuid, peer_in_addr: InAddr,
-        peer_pk: PublicKey, w_messages: WireMessages) -> Peer {
+fn handle_incoming_hello(hdb: Hydrabadger, peer_uid: Uuid, peer_in_addr: InAddr,
+        peer_pk: PublicKey, w_messages: WireMessages) -> PeerHandler {
     // Establish a write lock for the entire block to ensure no two incoming
     // connections can spawn an HB instance at the same time.
-    let hb_clone = hb.clone();
+    let mut hdb_clone = hdb.clone();
     trace!("::handle_incoming: Locking state for writing...");
-    let mut state = hb_clone.state.write();
+    let mut state = hdb_clone.state_mut();
     trace!("::handle_incoming: State locked for writing.");
 
     let peer_out_addr = OutAddr(w_messages.socket().peer_addr().unwrap());
 
     match state.discriminant() {
         StateDsct::Disconnected => {
-            // let qhb = hb.gen_hb_instance(peer_uid, peer_pk.clone());
-
-            // // Because this node is receiving a connection and has no previous
-            // // connections, it is the root bootnode and is promoted to
-            // // validator immediately.
-
-            // let local_pk = hb.secret_key.lock().as_ref()
-            //     .expect("Secret key already used!")
-            //     .public_key();
-
             let peer_list = vec![
-                // (peer_uid, peer_out_addr, peer_pk.clone())
                 AwaitingPeerInfo {
                     out_addr: peer_out_addr,
                     info: NetworkNodeInfo {
@@ -1061,49 +1209,37 @@ fn handle_incoming_hello(hb: Arc<HydrabadgerInner>, peer_uid: Uuid, peer_in_addr
                     },
                 }
             );
-
-            // if state.awaiting_peer_count() >= PEER_MINIMUM_COUNT {
-            //     let qhb = hb.gen_hb_instance(peer_uid, peer_pk.clone());
-            //     debug!("HB generated. Setting state to `ConnectedValidator`.");
-
-            //     state.set_connection_pending();
-            //     state.set_connected_observer(qhb);
-            //     state.set_connected_validator();
-            // }
         },
-        StateDsct::ConnectionPending => unreachable!(),
+        StateDsct::ConnectionPending(_count) => unreachable!(),
         _ => {},
     }
 
-    let peer = Peer::new(Some(peer_uid), hb, w_messages);
-    peer.hb.peer_out_addrs.write().insert(peer_uid, peer_out_addr);
+    let peer = PeerHandler::new(Some(peer_uid), hdb, w_messages);
+    peer.hdb.inner.peer_out_addrs.write().insert(peer_uid, peer_out_addr);
 
-    // Get a NetworkState
+    // Get the current `NetworkState`:
+    //
+    // FIXME: Implement returning observer/validator network states:
+    let net_state = state.network_state().unwrap();
 
-    // Actually add peers:
-    let net_state = NetworkState::AwaitingMorePeers(vec![]);
-
+    // Send response to remote peer:
     peer.wire_welcome_received_change_add(net_state);
 
-    // Relay incoming `HelloRequestChangeAdd` message.
-    peer.hb.peer_internal_tx.unbounded_send(
-            InternalMessage::wire(
-                peer_uid,
-                peer_out_addr,
-                WireMessage::request_change_add(peer_uid, peer_in_addr, peer_pk)
-            )
+    // Relay incoming `HelloRequestChangeAdd` message internally.
+    peer.hdb.send_internal(
+        InternalMessage::wire(
+            peer_uid,
+            peer_out_addr,
+            WireMessage::hello_request_change_add(peer_uid, peer_in_addr, peer_pk)
         )
-        .map_err(|err| error!("Unable to send on internal tx. \
-            Internal rx has dropped: {}", err))
-        .unwrap();
+    );
 
     trace!("::handle_incoming: State unlocked for writing.");
     peer
 }
 
-
 /// Returns a future that handles incoming connections on `socket`.
-fn handle_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
+fn handle_incoming(socket: TcpStream, hdb: Hydrabadger)
         -> impl Future<Item = (), Error = ()> {
     info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
     let wire_messages = WireMessages::new(socket);
@@ -1111,13 +1247,13 @@ fn handle_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
     wire_messages.into_future()
         .map_err(|(e, _)| e)
         .and_then(move |(msg_opt, w_messages)| {
-            let hb = hb.clone();
+            let hdb = hdb.clone();
 
             match msg_opt {
                 Some(msg) => match msg.into_kind() {
                     // The only correct entry point:
                     WireMessageKind::HelloRequestChangeAdd(peer_uid, peer_in_addr, peer_pk) => {
-                        let peer = handle_incoming_hello(hb, peer_uid, peer_in_addr, peer_pk, w_messages);
+                        let peer = handle_incoming_hello(hdb, peer_uid, peer_in_addr, peer_pk, w_messages);
                         Either::B(peer)
                     },
                     _ => {
@@ -1128,7 +1264,7 @@ fn handle_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
                 },
                 None => {
                     // The remote client closed the connection without sending
-                    // a request_change_add message.
+                    // a welcome_request_change_add message.
                     Either::A(future::ok(()))
                 },
             }
@@ -1136,82 +1272,89 @@ fn handle_incoming(socket: TcpStream, hb: Arc<HydrabadgerInner>)
         .map_err(|err| error!("Connection error = {:?}", err))
 }
 
+/// Connects to a new peer.
+fn connect_outgoing(hdb: Hydrabadger, remote_addr: SocketAddr)
+        -> impl Future<Item = (), Error = ()> {
+    let uid = hdb.inner.uid.clone();
+    let in_addr = hdb.inner.addr;
+    let pk = hdb.state().local_public_key();
+
+    TcpStream::connect(&remote_addr)
+        .map_err(Error::from)
+        .and_then(move |socket| {
+            // Wrap the socket with the frame delimiter and codec:
+            let mut wire_messages = WireMessages::new(socket);
+            let wire_hello_result = wire_messages.send_msg(
+                WireMessage::hello_request_change_add(uid, in_addr, pk));
+            match wire_hello_result {
+                Ok(_) => {
+                    // Set our state appropriately:
+                    trace!("::node: Locking state for writing...");
+                    hdb.inner.state.write().outgoing_connection_added();
+                    trace!("::node: State locked and unlocked for writing.");
+
+                    // hdb.send_internal(InternalMessage::new_outgoing_connection());
+
+                    let peer = PeerHandler::new(None, hdb, wire_messages);
+
+                    Either::A(peer)
+                },
+                Err(err) => Either::B(future::err(err)),
+            }
+        })
+        .map_err(|err| error!("Socket connection error: {:?}", err))
+}
 
 /// Binds to a host address and returns a future which starts the node.
-pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
+pub fn node(mut hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
         -> impl Future<Item = (), Error = ()> {
     let socket = TcpListener::bind(&hydrabadger.inner.addr).unwrap();
     info!("Listening on: {}", hydrabadger.inner.addr);
 
-    let hb = hydrabadger.inner.clone();
+    let hdb = hydrabadger.clone();
     let listen = socket.incoming()
         .map_err(|err| error!("Error accepting socket: {:?}", err))
         .for_each(move |socket| {
-            tokio::spawn(handle_incoming(socket, hb.clone()));
+            tokio::spawn(handle_incoming(socket, hdb.clone()));
             Ok(())
         });
 
-    let uid = hydrabadger.inner.uid.clone();
-    let in_addr = hydrabadger.inner.addr;
-    let pk = hydrabadger.local_public_key();
-    let hb = hydrabadger.inner.clone();
-
+    let hdb = hydrabadger.clone();
     let connect = future::lazy(move || {
-        for remote_addr in remotes.iter() {
-            let pk = pk.clone();
-            let hb = hb.clone();
-            tokio::spawn(TcpStream::connect(remote_addr)
-                .map_err(Error::from)
-                .and_then(move |socket| {
-                    // Wrap the socket with the frame delimiter and codec:
-                    let mut wire_messages = WireMessages::new(socket);
-                    let wire_hello_result = wire_messages.send_msg(
-                        WireMessage::request_change_add(uid, in_addr, pk.clone()));
-                    match wire_hello_result {
-                        Ok(_) => {
-                            // Set our state appropriately:
-                            trace!("::node: Locking state for writing...");
-                            hb.state.write().set_connection_pending();
-                            trace!("::node: State locked and unlocked for writing.");
-
-                            Either::A(Peer::new(None, hb, wire_messages))
-                        },
-                        Err(err) => Either::B(future::err(err)),
-                    }
-                })
-                .map_err(|err| error!("Socket connection error: {:?}", err)));
+        for &remote_addr in remotes.iter() {
+            tokio::spawn(connect_outgoing(hdb.clone(), remote_addr));
         }
         Ok(())
     });
 
-    let hb = hydrabadger.inner.clone();
+    let hdb = hydrabadger.clone();
     let generate_txns = Interval::new(Instant::now(), Duration::from_millis(3000))
         .for_each(move |_| {
-            let hb = hb.clone();
-            let peer_txs = hb.peer_txs.read();
+            let hdb = hdb.clone();
+            let peer_txs = hdb.peers();
 
-            trace!("Peer list:");
+            trace!("PeerHandler list:");
             for (peer_addr, mut peer_tx) in peer_txs.iter() {
                 trace!("     peer_addr: {}", peer_addr); }
 
             trace!("::node: Locking state for reading...");
-            if let Some(qhb) = &hb.state.read().qhb() {
+            if let Some(qhb) = &hdb.state().qhb() {
                 debug!("::node: State locked for reading.");
                 // If no other nodes are connected, panic:
                 if qhb.dyn_hb().netinfo().num_nodes() > PEER_MINIMUM_COUNT {
                     info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
                     // Send some random transactions to our internal HB instance.
                     let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| Transaction::random(TXN_BYTES)).collect();
-                    hb.peer_internal_tx.unbounded_send(
-                        InternalMessage::new_transactions(hb.uid, OutAddr(*hb.addr), txns)
-                    ).unwrap();
+                    hdb.send_internal(
+                        InternalMessage::new_transactions(hdb.inner.uid, OutAddr(*hdb.inner.addr), txns)
+                    );
                 } else {
                     error!("No nodes connected. Panicking...");
                     panic!("Invalid state");
                 }
             } else {
                 // info!("Disconnected, connection pending, or awaiting more peers.");
-                info!("State: {:?}", hb.state.read().discriminant());
+                info!("State: {:?}", hdb.state().discriminant());
             }
             trace!("::node: State unlocked for reading.");
 
@@ -1219,13 +1362,13 @@ pub fn node(hydrabadger: Hydrabadger, remotes: HashSet<SocketAddr>)
         })
         .map_err(|err| error!("List connection inverval error: {:?}", err));
 
-    let hydrabadger = hydrabadger.map_err(|err| error!("Hydrabadger internal error: {:?}", err));
+    let hdb_handler = hydrabadger.handler()
+        .map_err(|err| error!("HydrabadgerHandler internal error: {:?}", err));
 
-    listen.join4(connect, generate_txns, hydrabadger).map(|(_, _, _, _)| ())
+    listen.join4(connect, generate_txns, hdb_handler).map(|(_, _, _, _)| ())
 }
 
-
 /// Starts a node.
-pub fn run_node(hb: Hydrabadger, remotes: HashSet<SocketAddr>) {
-    tokio::run(node(hb, remotes));
+pub fn run_node(hdb: Hydrabadger, remotes: HashSet<SocketAddr>) {
+    tokio::run(node(hdb, remotes));
 }
