@@ -8,7 +8,7 @@ use std::{
     sync::{Arc},
     {self, iter, process, thread, time},
     collections::{
-        hash_map::Iter as HashMapIter,
+        hash_map::{Iter as HashMapIter, Values as HashMapValues},
         BTreeSet, HashSet, HashMap, VecDeque,
     },
     fmt::{self, Debug},
@@ -38,7 +38,7 @@ use tokio_codec::Decoder;
 use tokio_io::codec::length_delimited::Framed;
 use bytes::{BytesMut, Bytes, BufMut, IntoBuf, Buf};
 use rand::{self, Rng, Rand};
-use uuid::{self, Uuid};
+// use uuid::{self, Uuid};
 use byteorder::{self, ByteOrder, LittleEndian};
 use serde::{Serializer, Deserializer, Serialize, Deserialize};
 use serde_bytes;
@@ -61,7 +61,7 @@ use hbbft::{
 use ::{
     hydrabadger::{
 		Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
-		OutAddr, InAddr, NetworkState, Error,
+		OutAddr, InAddr, NetworkState, Error, Uid,
 	},
 };
 
@@ -71,7 +71,7 @@ use ::{
 /// The state for each connected client.
 pub struct PeerHandler {
     // Peer uid.
-    uid: Option<Uuid>,
+    uid: Option<Uid>,
 
     // The incoming stream of messages:
     wire_msgs: WireMessages,
@@ -91,7 +91,7 @@ pub struct PeerHandler {
 
 impl PeerHandler {
     /// Create a new instance of `Peer`.
-    pub fn new(full_info: Option<(Uuid, InAddr, PublicKey)>,
+    pub fn new(pub_info: Option<(Uid, InAddr, PublicKey)>,
             mut hdb: Hydrabadger, wire_msgs: WireMessages) -> PeerHandler {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
@@ -99,10 +99,10 @@ impl PeerHandler {
         // Create a channel for this peer
         let (tx, rx) = mpsc::unbounded();
 
-        let uid = full_info.as_ref().map(|(uid, _, _)| uid.clone());
+        let uid = pub_info.as_ref().map(|(uid, _, _)| uid.clone());
 
         // Add an entry for this `Peer` in the shared state map.
-        let guard = hdb.peers_mut().add(out_addr, tx, full_info);
+        let guard = hdb.peers_mut().add(out_addr, tx, pub_info);
 
         PeerHandler {
             uid,
@@ -247,7 +247,7 @@ impl Drop for PeerHandler {
 enum State {
 	Handshaking,
 	Established {
-		uid: Uuid,
+		uid: Uid,
 	    in_addr: InAddr,
 	    pk: PublicKey,
 	},
@@ -259,7 +259,7 @@ enum State {
 pub struct Peer {
     out_addr: OutAddr,
     tx: WireTx,
-    // uid: Option<Uuid>,
+    // uid: Option<Uid>,
     // in_addr: Option<InAddr>,
     // pk: Option<PublicKey>,
     state: State,
@@ -268,11 +268,11 @@ pub struct Peer {
 impl Peer {
     /// Returns a new `Peer`
     fn new(out_addr: OutAddr, tx: WireTx,
-    		// uid: Option<Uuid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
-            full_info: Option<(Uuid, InAddr, PublicKey)>,
+    		// uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+            pub_info: Option<(Uid, InAddr, PublicKey)>,
             ) -> Peer {
     	// assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
-    	let state = match full_info {
+    	let state = match pub_info {
     		None => State::Handshaking,
     		Some((uid, in_addr, pk)) => State::Established { uid, in_addr, pk },
     	};
@@ -285,7 +285,7 @@ impl Peer {
     }
 
     /// Returns the peer's unique identifier.
-    pub fn uid(&self) -> Option<&Uuid> {
+    pub fn uid(&self) -> Option<&Uid> {
     	match self.state {
     		State::Handshaking => None,
     		State::Established { ref uid, .. } => Some(uid),
@@ -313,6 +313,14 @@ impl Peer {
     	}
     }
 
+    /// Returns the peer's public info if established.
+    pub fn pub_info(&self) -> Option<(&Uid, &InAddr, &PublicKey)> {
+    	match self.state {
+    		State::Handshaking => None,
+    		State::Established { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+    	}
+    }
+
     /// Returns the peer's wire transmitter.
     pub fn tx(&self) -> &WireTx {
     	&self.tx
@@ -324,7 +332,7 @@ impl Peer {
 #[derive(Debug)]
 pub(crate) struct Peers {
     peers: HashMap<OutAddr, Peer>,
-    out_addrs: HashMap<Uuid, OutAddr>,
+    out_addrs: HashMap<Uid, OutAddr>,
 }
 
 impl Peers {
@@ -338,10 +346,10 @@ impl Peers {
 
     /// Adds a peer to the list.
     pub(crate) fn add(&mut self, out_addr: OutAddr, tx: WireTx,
-    		// uid: Option<Uuid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
-    		full_info: Option<(Uuid, InAddr, PublicKey)>,
+    		// uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+    		pub_info: Option<(Uid, InAddr, PublicKey)>,
     		) {
-        let peer = Peer::new(out_addr, tx, full_info);
+        let peer = Peer::new(out_addr, tx, pub_info);
         if let State::Established { uid, .. } = peer.state {
             self.out_addrs.insert(uid, peer.out_addr);
         }
@@ -362,7 +370,7 @@ impl Peers {
         self.peers.get(out_addr.borrow())
     }
 
-    pub(crate) fn get_by_uid<U: Borrow<Uuid>>(&self, uid: U) -> Option<&Peer> {
+    pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer> {
         // self.peers.get()
         self.out_addrs.get(uid.borrow()).and_then(|addr| self.get(addr))
     }
@@ -370,6 +378,11 @@ impl Peers {
     /// Returns an Iterator over the list of peers.
     pub(crate) fn iter(&self) -> HashMapIter<OutAddr, Peer> {
         self.peers.iter()
+    }
+
+    /// Returns an Iterator over the list of peers.
+    pub(crate) fn peers(&self) -> HashMapValues<OutAddr, Peer> {
+        self.peers.values()
     }
 
     /// Returns the current number of connected peers.

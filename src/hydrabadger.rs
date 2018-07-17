@@ -87,6 +87,31 @@ type InternalTx = mpsc::UnboundedSender<InternalMessage>;
 type InternalRx = mpsc::UnboundedReceiver<InternalMessage>;
 
 
+
+/// A unique identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct Uid(pub(crate) Uuid);
+
+impl Uid {
+    /// Returns a new, random `Uid`.
+    pub fn new() -> Uid {
+        Uid(Uuid::new_v4())
+    }
+}
+
+impl Rand for Uid {
+    fn rand<R: Rng>(_rng: &mut R) -> Uid {
+        Uid::new()
+    }
+}
+
+impl fmt::Display for Uid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+
 /// A peer's incoming (listening) address.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct InAddr(pub SocketAddr);
@@ -159,7 +184,7 @@ impl Transaction {
 /// Nodes of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NetworkNodeInfo {
-    uid: Uuid,
+    uid: Uid,
     in_addr: InAddr,
     pk: PublicKey,
 }
@@ -167,23 +192,24 @@ pub struct NetworkNodeInfo {
 /// The current state of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkState {
+    None,
     AwaitingMorePeers(Vec<NetworkNodeInfo>),
-    Active,
+    Active(Vec<NetworkNodeInfo>),
 }
 
 
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessageKind {
-    HelloRequestChangeAdd(Uuid, InAddr, PublicKey),
-    WelcomeReceivedChangeAdd(Uuid, NetworkState),
+    HelloRequestChangeAdd(Uid, InAddr, PublicKey),
+    WelcomeReceivedChangeAdd(Uid, NetworkState),
     RequestNetworkState,
     NetworkState(NetworkState),
     Goodbye,
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
-    Message(Message<Uuid>),
-    // TargetedMessage(TargetedMessage<Uuid>),
+    Message(Message<Uid>),
+    // TargetedMessage(TargetedMessage<Uid>),
 }
 
 
@@ -195,17 +221,17 @@ pub struct WireMessage {
 
 impl WireMessage {
     /// Returns a `HelloRequestChangeAdd` variant.
-    pub fn hello_request_change_add(uid: Uuid, in_addr: InAddr, pub_key: PublicKey) -> WireMessage {
+    pub fn hello_request_change_add(uid: Uid, in_addr: InAddr, pub_key: PublicKey) -> WireMessage {
         WireMessage { kind: WireMessageKind::HelloRequestChangeAdd(uid, in_addr, pub_key), }
     }
 
     /// Returns a `WelcomeReceivedChangeAdd` variant.
-    pub fn welcome_received_change_add(uid: Uuid, net_state: NetworkState) -> WireMessage {
+    pub fn welcome_received_change_add(uid: Uid, net_state: NetworkState) -> WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, net_state) }
     }
 
     /// Returns a `Message` variant.
-    pub fn message(msg: Message<Uuid>) -> WireMessage {
+    pub fn message(msg: Message<Uid>) -> WireMessage {
         WireMessage { kind: WireMessageKind::Message(msg), }
     }
 
@@ -226,8 +252,8 @@ impl WireMessage {
 pub enum InternalMessageKind {
     Wire(WireMessage),
     NewTransactions(Vec<Transaction>),
-    IncomingHbMessage(Message<Uuid>),
-    Input(Input<Vec<Transaction>, Uuid>),
+    IncomingHbMessage(Message<Uid>),
+    Input(Input<Vec<Transaction>, Uid>),
     PeerDisconnect,
     // NewOutgoingConnection,
 }
@@ -236,13 +262,13 @@ pub enum InternalMessageKind {
 /// A message between internal threads/tasks.
 #[derive(Clone, Debug)]
 pub struct InternalMessage {
-    src_uid: Uuid,
+    src_uid: Uid,
     src_addr: OutAddr,
     kind: InternalMessageKind,
 }
 
 impl InternalMessage {
-    pub fn new(src_uid: Uuid, src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
+    pub fn new(src_uid: Uid, src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
         InternalMessage { src_uid, kind, src_addr}
     }
 
@@ -250,26 +276,26 @@ impl InternalMessage {
     // //
     // // TODO: Do something safer.
     // pub fn new_without_uid(src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
-    //     InternalMessage::new(Uuid::default(), src_addr, kind)
+    //     InternalMessage::new(Uid::default(), src_addr, kind)
     // }
 
-    pub fn wire(src_uid: Uuid, src_addr: OutAddr, wire_message: WireMessage) -> InternalMessage {
+    pub fn wire(src_uid: Uid, src_addr: OutAddr, wire_message: WireMessage) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::Wire(wire_message))
     }
 
-    pub fn new_transactions(src_uid: Uuid, src_addr: OutAddr, txns: Vec<Transaction>) -> InternalMessage {
+    pub fn new_transactions(src_uid: Uid, src_addr: OutAddr, txns: Vec<Transaction>) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::NewTransactions(txns))
     }
 
-    pub fn incoming_hb_message(src_uid: Uuid, src_addr: OutAddr, msg: Message<Uuid>) -> InternalMessage {
+    pub fn incoming_hb_message(src_uid: Uid, src_addr: OutAddr, msg: Message<Uid>) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::IncomingHbMessage(msg))
     }
 
-    pub fn input(src_uid: Uuid, src_addr: OutAddr, input: Input<Vec<Transaction>, Uuid>) -> InternalMessage {
+    pub fn input(src_uid: Uid, src_addr: OutAddr, input: Input<Vec<Transaction>, Uid>) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::Input(input))
     }
 
-    pub fn peer_disconnect(src_uid: Uuid, src_addr: OutAddr) -> InternalMessage {
+    pub fn peer_disconnect(src_uid: Uid, src_addr: OutAddr) -> InternalMessage {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::PeerDisconnect)
     }
 
@@ -278,7 +304,7 @@ impl InternalMessage {
     // }
 
     /// Returns the source unique identifier this message was received in.
-    pub fn src_uid(&self) -> &Uuid {
+    pub fn src_uid(&self) -> &Uid {
         &self.src_uid
     }
 
@@ -293,7 +319,7 @@ impl InternalMessage {
     }
 
     /// Consumes this `InternalMessage` into its parts.
-    pub fn into_parts(self) -> (Uuid, OutAddr, InternalMessageKind) {
+    pub fn into_parts(self) -> (Uid, OutAddr, InternalMessageKind) {
         (self.src_uid, self.src_addr, self.kind)
     }
 }
@@ -372,12 +398,13 @@ impl Sink for WireMessages {
 
 /// Returns a new hydrabadger instance.
 fn gen_qhb_instance(
-        local_uid: Uuid,
+        local_uid: Uid,
         local_addr: InAddr,
-        secret_key: ClearOnDrop<Box<SecretKey>>,
+        // secret_key: ClearOnDrop<Box<SecretKey>>,
+        secret_key: SecretKey,
         // peers: Vec<AwaitingPeerInfo>,
         peers: &Peers,
-        ) -> QueueingHoneyBadger<Vec<Transaction>, Uuid> {
+        ) -> QueueingHoneyBadger<Vec<Transaction>, Uid> {
     ///////////////////////// BOOTSTRAP ////////////////////////
     // // First, you generate keys independently. Then:
     //
@@ -403,23 +430,26 @@ fn gen_qhb_instance(
     pks.push(secret_key.public_key());
 
     // FIXME: Generate this properly (using bootstrap above):s
-    let pk_set = Commitment { coeff: vec![   ] }.into();
+    // let pk_set = Commitment { coeff: vec![   ] }.into();
 
 
-    let netinfo = NetworkInfo::new(
-        local_uid,
-        node_ids,
-        secret_key,
-        pk_set,
-    );
+    // let netinfo = NetworkInfo::new(
+    //     local_uid,
+    //     node_ids,
+    //     secret_key,
+    //     pk_set,
+    // );
 
-    QueueingHoneyBadger::builder(netinfo)
-        // Default: 100:
-        .batch_size(BATCH_SIZE)
-        // Default: 3:
-        .max_future_epochs(3)
-        .build()
+    // QueueingHoneyBadger::builder(netinfo)
+    //     // Default: 100:
+    //     .batch_size(BATCH_SIZE)
+    //     // Default: 3:
+    //     .max_future_epochs(3)
+    //     .build()
+
+    unimplemented!();
 }
+
 
 
 /// A `State` discriminant.
@@ -436,31 +466,31 @@ enum StateDsct {
 // The current hydrabadger state.
 pub(crate) enum State {
     Disconnected {
-        local_uid: Uuid,
+        local_uid: Uid,
         local_addr: InAddr,
-        secret_key: Option<ClearOnDrop<Box<SecretKey>>>,
+        secret_key: Option<SecretKey>,
     },
     ConnectionPending {
-        // qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
-        local_uid: Uuid,
+        // qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
+        local_uid: Uid,
         local_addr: InAddr,
-        secret_key: Option<ClearOnDrop<Box<SecretKey>>>,
+        secret_key: Option<SecretKey>,
         // count: usize,
     },
     ConnectedAwaitingMorePeers {
-        local_uid: Uuid,
+        local_uid: Uid,
         local_addr: InAddr,
-        secret_key: Option<ClearOnDrop<Box<SecretKey>>>,
+        secret_key: Option<SecretKey>,
         // peers: Option<Vec<AwaitingPeerInfo>>,
     },
     ConnectedObserver {
-        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
+        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
         // peers: Option<Vec<AwaitingPeerInfo>>,
         // sk: SecretKey,
         // pk_set: PublicKeySet,
     },
     ConnectedValidator {
-        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uuid>>,
+        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
         // peers: Option<Vec<AwaitingPeerInfo>>,
         // sk: SecretKey,
         // pk_set: PublicKeySet,
@@ -482,8 +512,8 @@ impl State {
     }
 
     /// Returns a new `State::Disconnected`.
-    fn disconnected(local_uid: Uuid, local_addr: InAddr,
-            secret_key: ClearOnDrop<Box<SecretKey>>) -> State {
+    fn disconnected(local_uid: Uid, local_addr: InAddr,
+            secret_key: SecretKey) -> State {
         State::Disconnected { local_uid, local_addr, secret_key: Some(secret_key) }
     }
 
@@ -540,7 +570,7 @@ impl State {
 
     /// Adds an awaiting peer and changes the network state appropriately when
     /// enough peers are added.
-    fn remove_awaiting_peer(&mut self, uid: Uuid, out_addr: OutAddr) {
+    fn remove_awaiting_peer(&mut self, uid: Uid, out_addr: OutAddr) {
         *self = match *self {
             State::ConnectedAwaitingMorePeers {
                     local_uid, local_addr, ref mut secret_key, /*ref mut peers*/ } => {
@@ -641,7 +671,7 @@ impl State {
     /// Changes the variant (in-place) of this `State` to `ConnectedObserver`.
     //
     // TODO: Add proper error handling:
-    fn set_connected_observer(&mut self, qhb: QueueingHoneyBadger<Vec<Transaction>, Uuid>) {
+    fn set_connected_observer(&mut self, qhb: QueueingHoneyBadger<Vec<Transaction>, Uid>) {
         *self = match *self {
             State::ConnectionPending { .. } => State::ConnectedObserver { qhb: Some(qhb) },
             _ => panic!("Must be connection-pending before becoming connected-observer."),
@@ -664,25 +694,46 @@ impl State {
 
     }
 
+
+    // /// Nodes of the network.
+    // #[derive(Clone, Debug, Serialize, Deserialize)]
+    // pub struct NetworkNodeInfo {
+    //     uid: Uid,
+    //     in_addr: InAddr,
+    //     pk: PublicKey,
+    // }
+
+    // /// The current state of the network.
+    // #[derive(Clone, Debug, Serialize, Deserialize)]
+    // pub enum NetworkState {
+    //     AwaitingMorePeers(Vec<NetworkNodeInfo>),
+    //     Active,
+    // }
+
+
     /// Returns the network state, if possible.
-    fn network_state(&self, peers: &Peers) -> Option<NetworkState> {
+    fn network_state(&self, peers: &Peers) -> NetworkState {
+        let peer_infos = peers.peers().filter_map(|peer| {
+            peer.pub_info().map(|(&uid, &in_addr, pk)| {
+                NetworkNodeInfo { uid, in_addr, pk: pk.clone() }
+            })
+        }).collect::<Vec<_>>();
         match self {
-            State::ConnectedAwaitingMorePeers { /*peers,*/ .. } => {
-                // peers.as_ref().map(|ps| {
-                //     NetworkState::AwaitingMorePeers(
-                //         ps.iter().map(|p| p.info.clone()).collect()
-                //     )
-                // })
-                unimplemented!();
+            State::ConnectedAwaitingMorePeers { .. } => {
+                NetworkState::AwaitingMorePeers(peer_infos)
             },
-            State::ConnectedObserver { .. } => unimplemented!(),
-            State::ConnectedValidator { .. } => unimplemented!(),
-            _ => None,
+            State::ConnectedObserver { .. } => {
+                NetworkState::Active(peer_infos)
+            },
+            State::ConnectedValidator { .. } => {
+                NetworkState::Active(peer_infos)
+            },
+            _ => NetworkState::None,
         }
     }
 
     /// Returns a reference to the internal HB instance.
-    fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uuid>> {
+    fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uid>> {
         match self {
             State::ConnectedObserver { ref qhb, .. } => qhb.as_ref(),
             State::ConnectedValidator { ref qhb, .. } => qhb.as_ref(),
@@ -691,7 +742,7 @@ impl State {
     }
 
     /// Returns a reference to the internal HB instance.
-    fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<Transaction>, Uuid>> {
+    fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<Transaction>, Uid>> {
         match self {
             State::ConnectedObserver { ref mut qhb, .. } => qhb.as_mut(),
             State::ConnectedValidator { ref mut qhb, .. } => qhb.as_mut(),
@@ -721,7 +772,7 @@ impl State {
 /// Shared all over the place.
 struct HydrabadgerInner {
     /// Node uid:
-    uid: Uuid,
+    uid: Uid,
     /// Incoming connection socket.
     addr: InAddr,
 
@@ -800,7 +851,7 @@ impl HydrabadgerHandler {
 
                     // Get the current `NetworkState`:
                     let peers = self.hdb.peers();
-                    let net_state = state.network_state(&*peers).unwrap();
+                    let net_state = state.network_state(&*peers);
 
                     // // Send response to remote peer:
                     // peers.get(&src_addr).unwrap().wire_welcome_received_change_add(net_state);
@@ -955,9 +1006,8 @@ pub struct Hydrabadger {
 impl Hydrabadger {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr) -> Self {
-        let uid = Uuid::new_v4();
-        let secret_key = ClearOnDrop::new(Box::new(SecretKey::rand(
-            &mut rand::thread_rng())));
+        let uid = Uid::new();
+        let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
 
@@ -1158,8 +1208,7 @@ impl Hydrabadger {
             Ok(())
         });
 
-        let hdb = self.clone();
-        let generate_txns = hdb.generate_txns();
+        let generate_txns = self.clone().generate_txns();
 
         let hdb_handler = self.handler()
             .map_err(|err| error!("HydrabadgerHandler internal error: {:?}", err));
