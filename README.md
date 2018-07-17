@@ -11,14 +11,13 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 2. `cd hydrabadger`
 3. `./peer0`
 
-#### Additional local peers
+#### Additional peers
 
 1. Open a new terminal window.
 2. `cd {...}/hydrabadger`
 3. `./peer1`
 
-4. Repeat 1 and 2
-5. `./peer2`
+4. (Repeat 1 and 2), `./peer2`, `./peer3`, `./peer4`
 
 
 Each peer will generate a number of random transactions at regular intervals,
