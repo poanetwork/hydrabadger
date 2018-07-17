@@ -30,5 +30,5 @@ extern crate hbbft;
 pub mod hydrabadger;
 pub mod blockchain;
 
-pub use hydrabadger::{run_node, Hydrabadger};
+pub use hydrabadger::{Hydrabadger};
 pub use blockchain::{Blockchain, MiningError};
