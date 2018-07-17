@@ -58,9 +58,11 @@ use hbbft::{
     queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger, Input, Batch, Change},
     // dynamic_honey_badger::{Error as DhbError, DynamicHoneyBadger, Input, Batch, Change, Message},
 };
-use hydrabadger::{
-	Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireRx, WireTx,
-	OutAddr, InAddr, NetworkState, Error,
+use ::{
+    hydrabadger::{
+		Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
+		OutAddr, InAddr, NetworkState, Error,
+	},
 };
 
 
@@ -111,26 +113,26 @@ impl PeerHandler {
         }
     }
 
-    /// Sends a message to all connected peers.
-    fn wire_to_all(&mut self, msg: &WireMessage) {
-        // Now, send the message to all other peers
-        for (p_addr, peer) in self.hdb.peers().iter() {
-            // Don't send the message to ourselves
-            if *p_addr != self.out_addr {
-                // The send only fails if the rx half has been dropped,
-                // however this is impossible as the `tx` half will be
-                // removed from the map before the `rx` is dropped.
-                peer.tx.unbounded_send(msg.clone()).unwrap();
-            }
-        }
-    }
+    // /// Sends a message to all connected peers.
+    // fn wire_to_all(&mut self, msg: &WireMessage) {
+    //     // Now, send the message to all other peers
+    //     for (p_addr, peer) in self.hdb.peers().iter() {
+    //         // Don't send the message to ourselves
+    //         if *p_addr != self.out_addr {
+    //             // The send only fails if the rx half has been dropped,
+    //             // however this is impossible as the `tx` half will be
+    //             // removed from the map before the `rx` is dropped.
+    //             peer.tx.unbounded_send(msg.clone()).unwrap();
+    //         }
+    //     }
+    // }
 
-    /// Sends a hello response (welcome).
-    pub(crate) fn wire_welcome_received_change_add(&self, net_state: NetworkState) {
-        self.hdb.peers().get(&self.out_addr).unwrap()
-            .tx.unbounded_send(WireMessage::welcome_received_change_add(self.uid.clone().unwrap(), net_state))
-            .unwrap();
-    }
+    // /// Sends a hello response (welcome).
+    // pub(crate) fn wire_welcome_received_change_add(&self, net_state: NetworkState) {
+    //     self.hdb.peers().get(&self.out_addr).unwrap()
+    //         .tx.unbounded_send(WireMessage::welcome_received_change_add(self.uid.clone().unwrap(), net_state))
+    //         .unwrap();
+    // }
 
     pub(crate) fn hdb(&self) -> &Hydrabadger {
     	&self.hdb
