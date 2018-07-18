@@ -1,5 +1,4 @@
 #/bin/bash
-# HYDRABADGER_LOG=error,info,debug,trace cargo run --bin peer_node -- -b localhost:3002 -r localhost:3000
-HYDRABADGER_LOG=error,info,debug cargo run --bin peer_node -- -b localhost:3002 -r localhost:3000
+HYDRABADGER_LOG=error,info,{$HYDRABADGER_LOG} cargo run --bin peer_node -- -b localhost:3002 -r localhost:3000
 
 
