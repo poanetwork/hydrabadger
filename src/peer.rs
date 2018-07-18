@@ -183,11 +183,11 @@ impl Future for PeerHandler {
                         error!("Duplicate `WireMessage::HelloRequestChangeAdd` \
                             received from '{}'", src_uid);
                     },
-                    WireMessageKind::WelcomeReceivedChangeAdd(src_uid, net_state) => {
+                    WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) => {
                         self.uid = Some(src_uid);
                         self.hdb.send_internal(
                             InternalMessage::wire(src_uid, self.out_addr,
-                                WireMessage::welcome_received_change_add(src_uid, net_state)
+                                WireMessage::welcome_received_change_add(src_uid, pk, net_state)
                             )
                         );
                     },
@@ -284,6 +284,15 @@ impl Peer {
         }
     }
 
+    /// Sets a peer state to `State::Established` and stores public info.
+    pub(crate) fn establish(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
+    	self.state = State::Established {
+			uid: pub_info.0,
+			in_addr: pub_info.1,
+			pk: pub_info.2
+    	};
+    }
+
     /// Returns the peer's unique identifier.
     pub fn uid(&self) -> Option<&Uid> {
     	match self.state {
@@ -356,6 +365,14 @@ impl Peers {
         self.peers.insert(peer.out_addr, peer);
     }
 
+    pub(crate) fn establish_peer<O: Borrow<OutAddr>>(&mut self, out_addr: O,
+    		pub_info: (Uid, InAddr, PublicKey)) {
+    	let mut peer = self.peers.get_mut(out_addr.borrow())
+    		.expect(&format!("No peer found with outgoing address: {}", out_addr.borrow()));
+    	peer.establish(pub_info);
+
+	}
+
     /// Removes a peer the list if it exists.
     pub(crate) fn remove<O: Borrow<OutAddr>>(&mut self, out_addr: O) {
         let peer = self.peers.remove(out_addr.borrow());
@@ -388,5 +405,16 @@ impl Peers {
     /// Returns the current number of connected peers.
     pub(crate) fn len(&self) -> usize {
         self.peers.len()
+    }
+
+    pub(crate) fn contains_in_addr<I: Borrow<InAddr>>(&self, in_addr: I) -> bool {
+    	for peer in self.peers.values() {
+    		if let Some(peer_in_addr) = peer.in_addr() {
+    			if peer_in_addr == in_addr.borrow() {
+    				return true;
+    			}
+    		}
+    	}
+    	false
     }
 }
