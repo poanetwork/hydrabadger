@@ -1,69 +1,24 @@
 //! A peer network node.
 
-#![allow(unused_imports, dead_code, unused_variables, unused_mut)]
+// #![allow(unused_imports, dead_code, unused_variables, unused_mut)]
 
 use std::{
-    mem,
-    time::{Duration, Instant},
-    sync::{Arc},
-    {self, iter, process, thread, time},
     collections::{
         hash_map::{Iter as HashMapIter, Values as HashMapValues},
-        BTreeSet, HashSet, HashMap, VecDeque,
+        HashMap,
     },
-    fmt::{self, Debug},
-    marker::{Send, Sync},
-    net::{SocketAddr},
-    rc::Rc,
-    io::Cursor,
-    ops::Deref,
     borrow::Borrow,
 };
-use crossbeam;
-use futures::{
-    StartSend, AsyncSink,
-    sync::mpsc,
-    future::{self, Either},
-};
-use tokio::{
-    self,
-    io,
-    reactor::{Reactor, Handle},
-    net::{TcpListener, TcpStream},
-    timer::Interval,
-    executor::{Executor, DefaultExecutor},
-    prelude::*,
-};
-use tokio_codec::Decoder;
-use tokio_io::codec::length_delimited::Framed;
-use bytes::{BytesMut, Bytes, BufMut, IntoBuf, Buf};
-use rand::{self, Rng, Rand};
-// use uuid::{self, Uuid};
-use byteorder::{self, ByteOrder, LittleEndian};
-use serde::{Serializer, Deserializer, Serialize, Deserialize};
-use serde_bytes;
-use bincode::{self, serialize_into, deserialize_from, serialize, deserialize};
-use tokio_serde_bincode::{ReadBincode, WriteBincode};
-use parking_lot::{RwLock, Mutex, RwLockReadGuard, RwLockWriteGuard};
-use clear_on_drop::ClearOnDrop;
+use futures::sync::mpsc;
+use tokio::prelude::*;
 use hbbft::{
-    broadcast::{Broadcast, BroadcastMessage},
     crypto::{
-        poly::{Poly, Commitment},
-        SecretKeySet, PublicKey, PublicKeySet, SecretKey
-    },
-    messaging::{DistAlgorithm, NetworkInfo, SourcedMessage, Target, TargetedMessage},
-    proto::message::BroadcastProto,
-    dynamic_honey_badger::Message,
-    queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger, Input, Batch, Change},
-    // dynamic_honey_badger::{Error as DhbError, DynamicHoneyBadger, Input, Batch, Change, Message},
-};
-use ::{
-    hydrabadger::{
-        Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
-        OutAddr, InAddr, NetworkState, Error, Uid,
+        PublicKey,
     },
 };
+use hydrabadger::{ Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages,
+    WireTx, WireRx, OutAddr, InAddr, Error, Uid};
+
 
 
 
@@ -92,7 +47,7 @@ pub struct PeerHandler {
 impl PeerHandler {
     /// Create a new instance of `Peer`.
     pub fn new(pub_info: Option<(Uid, InAddr, PublicKey)>,
-            mut hdb: Hydrabadger, wire_msgs: WireMessages) -> PeerHandler {
+            hdb: Hydrabadger, wire_msgs: WireMessages) -> PeerHandler {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
 
@@ -102,7 +57,7 @@ impl PeerHandler {
         let uid = pub_info.as_ref().map(|(uid, _, _)| uid.clone());
 
         // Add an entry for this `Peer` in the shared state map.
-        let guard = hdb.peers_mut().add(out_addr, tx, pub_info);
+        hdb.peers_mut().add(out_addr, tx, pub_info);
 
         PeerHandler {
             uid,
@@ -179,14 +134,14 @@ impl Future for PeerHandler {
 
             if let Some(msg) = message {
                 match msg.into_kind() {
-                    WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, _pub_key) => {
+                    WireMessageKind::HelloRequestChangeAdd(src_uid, _in_addr, _pub_key) => {
                         error!("Duplicate `WireMessage::HelloRequestChangeAdd` \
                             received from '{}'", src_uid);
                     },
                     WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) => {
                         self.uid = Some(src_uid);
                         self.hdb.send_internal(
-                            InternalMessage::wire(src_uid, self.out_addr,
+                            InternalMessage::wire(Some(src_uid), self.out_addr,
                                 WireMessage::welcome_received_change_add(src_uid, pk, net_state)
                             )
                         );
@@ -194,15 +149,14 @@ impl Future for PeerHandler {
                     WireMessageKind::Message(msg) => {
                         let uid = self.uid.clone()
                             .expect("`WireMessageKind::Message` received before \
-                                `WireMessageKind::WelcomeReceivedChangeAdd`");
+                                establishing peer");
                         self.hdb.send_internal(
-                            InternalMessage::incoming_hb_message(uid, self.out_addr, msg)
+                            InternalMessage::hb_message(uid, self.out_addr, msg)
                         )
                     },
                     kind @ _ => {
-                        let uid = self.uid.clone().unwrap_or(Uid::nil());
-                        self.hdb.send_internal(InternalMessage::wire(uid, self.out_addr,
-                            kind.into()))
+                        self.hdb.send_internal(InternalMessage::wire(self.uid.clone(),
+                            self.out_addr, kind.into()))
                     }
                 }
             } else {
@@ -248,6 +202,7 @@ impl Drop for PeerHandler {
 
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 enum State {
     Handshaking,
     Observer,
@@ -290,7 +245,7 @@ impl Peer {
     }
 
     /// Sets a peer state to `State::Validator` and stores public info.
-    pub(crate) fn establish_validator(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
+    fn establish_validator(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
         self.state = State::Validator {
             uid: pub_info.0,
             in_addr: pub_info.1,
@@ -385,12 +340,27 @@ impl Peers {
         self.peers.insert(peer.out_addr, peer);
     }
 
+    /// Attempts to establish a peer as a validator, storing `pub_info`.
+    ///
+    /// Returns `true` if the peer was already established as a validator.
+    ///
+    /// TODO: Error handling...
     pub(crate) fn establish_validator<O: Borrow<OutAddr>>(&mut self, out_addr: O,
-            pub_info: (Uid, InAddr, PublicKey)) {
-        let mut peer = self.peers.get_mut(out_addr.borrow())
-            .expect(&format!("No peer found with outgoing address: {}", out_addr.borrow()));
-        peer.establish_validator(pub_info);
-
+            pub_info: (Uid, InAddr, PublicKey)) -> bool {
+        let peer = self.peers.get_mut(out_addr.borrow())
+            .expect(&format!("Peers::establish_validator: \
+                No peer found with outgoing address: {}", out_addr.borrow()));
+        match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
+            Some(_out_addr_pre) => {
+                let pi_pre = peer.pub_info()
+                    .expect("Peers::establish_validator: internal consistency error");
+                assert!(pub_info.0 == *pi_pre.0 && pub_info.1 == *pi_pre.1 && pub_info.2 == *pi_pre.2);
+                assert!(peer.is_validator());
+                return true;
+            },
+            None => peer.establish_validator(pub_info),
+        }
+        false
     }
 
     /// Removes a peer the list if it exists.
