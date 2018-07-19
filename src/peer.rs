@@ -60,9 +60,9 @@ use hbbft::{
 };
 use ::{
     hydrabadger::{
-		Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
-		OutAddr, InAddr, NetworkState, Error, Uid,
-	},
+        Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
+        OutAddr, InAddr, NetworkState, Error, Uid,
+    },
 };
 
 
@@ -135,11 +135,11 @@ impl PeerHandler {
     // }
 
     pub(crate) fn hdb(&self) -> &Hydrabadger {
-    	&self.hdb
+        &self.hdb
     }
 
     pub(crate) fn out_addr(&self) -> &OutAddr {
-    	&self.out_addr
+        &self.out_addr
     }
 }
 
@@ -199,7 +199,11 @@ impl Future for PeerHandler {
                             InternalMessage::incoming_hb_message(uid, self.out_addr, msg)
                         )
                     },
-                    _ => unimplemented!(),
+                    kind @ _ => {
+                        let uid = self.uid.clone().unwrap_or(Uid::nil());
+                        self.hdb.send_internal(InternalMessage::wire(uid, self.out_addr,
+                            kind.into()))
+                    }
                 }
             } else {
                 // EOF was reached. The remote client has disconnected. There is
@@ -245,12 +249,13 @@ impl Drop for PeerHandler {
 
 #[derive(Clone, Debug)]
 enum State {
-	Handshaking,
-	Established {
-		uid: Uid,
-	    in_addr: InAddr,
-	    pk: PublicKey,
-	},
+    Handshaking,
+    Observer,
+    Validator {
+        uid: Uid,
+        in_addr: InAddr,
+        pk: PublicKey,
+    },
 }
 
 
@@ -268,76 +273,91 @@ pub struct Peer {
 impl Peer {
     /// Returns a new `Peer`
     fn new(out_addr: OutAddr, tx: WireTx,
-    		// uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+            // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
             pub_info: Option<(Uid, InAddr, PublicKey)>,
             ) -> Peer {
-    	// assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
-    	let state = match pub_info {
-    		None => State::Handshaking,
-    		Some((uid, in_addr, pk)) => State::Established { uid, in_addr, pk },
-    	};
+        // assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
+        let state = match pub_info {
+            None => State::Handshaking,
+            Some((uid, in_addr, pk)) => State::Validator { uid, in_addr, pk },
+        };
 
         Peer {
-        	out_addr,
-        	tx,
-        	state,
+            out_addr,
+            tx,
+            state,
         }
     }
 
-    /// Sets a peer state to `State::Established` and stores public info.
-    pub(crate) fn establish(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
-    	self.state = State::Established {
-			uid: pub_info.0,
-			in_addr: pub_info.1,
-			pk: pub_info.2
-    	};
+    /// Sets a peer state to `State::Validator` and stores public info.
+    pub(crate) fn establish_validator(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
+        self.state = State::Validator {
+            uid: pub_info.0,
+            in_addr: pub_info.1,
+            pk: pub_info.2
+        };
     }
 
     /// Returns the peer's unique identifier.
     pub fn uid(&self) -> Option<&Uid> {
-    	match self.state {
-    		State::Handshaking => None,
-    		State::Established { ref uid, .. } => Some(uid),
-    	}
+        match self.state {
+            State::Handshaking => None,
+            State::Observer => None,
+            State::Validator { ref uid, .. } => Some(uid),
+        }
     }
 
     /// Returns the peer's unique identifier.
     pub fn out_addr(&self) -> &OutAddr {
-    	&self.out_addr
+        &self.out_addr
     }
 
     /// Returns the peer's public key.
     pub fn public_key(&self) -> Option<&PublicKey> {
-    	match self.state {
-    		State::Handshaking => None,
-    		State::Established { ref pk, .. } => Some(pk),
-    	}
+        match self.state {
+            State::Handshaking => None,
+            State::Observer => None,
+            State::Validator { ref pk, .. } => Some(pk),
+        }
     }
 
     /// Returns the peer's incoming (listening) socket address.
     pub fn in_addr(&self) -> Option<&InAddr> {
-    	match self.state {
-    		State::Handshaking => None,
-    		State::Established { ref in_addr, .. } => Some(in_addr),
-    	}
+        match self.state {
+            State::Handshaking => None,
+            State::Observer => None,
+            State::Validator { ref in_addr, .. } => Some(in_addr),
+        }
     }
 
     /// Returns the peer's public info if established.
     pub fn pub_info(&self) -> Option<(&Uid, &InAddr, &PublicKey)> {
-    	match self.state {
-    		State::Handshaking => None,
-    		State::Established { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
-    	}
+        match self.state {
+            State::Handshaking => None,
+            State::Observer => None,
+            State::Validator { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+        }
+    }
+
+    /// Returns true if this peer is an established validator.
+    pub fn is_validator(&self) -> bool {
+        match self.state {
+            State::Validator { .. } => true,
+            _ => false,
+        }
     }
 
     /// Returns the peer's wire transmitter.
     pub fn tx(&self) -> &WireTx {
-    	&self.tx
+        &self.tx
     }
 }
 
 
 /// Peer nodes of the network.
+//
+// TODO: Keep a separate `HashSet` of validator `OutAddrs` to avoid having to
+// iterate through entire list.
 #[derive(Debug)]
 pub(crate) struct Peers {
     peers: HashMap<OutAddr, Peer>,
@@ -355,23 +375,23 @@ impl Peers {
 
     /// Adds a peer to the list.
     pub(crate) fn add(&mut self, out_addr: OutAddr, tx: WireTx,
-    		// uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
-    		pub_info: Option<(Uid, InAddr, PublicKey)>,
-    		) {
+            // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+            pub_info: Option<(Uid, InAddr, PublicKey)>,
+            ) {
         let peer = Peer::new(out_addr, tx, pub_info);
-        if let State::Established { uid, .. } = peer.state {
+        if let State::Validator { uid, .. } = peer.state {
             self.out_addrs.insert(uid, peer.out_addr);
         }
         self.peers.insert(peer.out_addr, peer);
     }
 
-    pub(crate) fn establish_peer<O: Borrow<OutAddr>>(&mut self, out_addr: O,
-    		pub_info: (Uid, InAddr, PublicKey)) {
-    	let mut peer = self.peers.get_mut(out_addr.borrow())
-    		.expect(&format!("No peer found with outgoing address: {}", out_addr.borrow()));
-    	peer.establish(pub_info);
+    pub(crate) fn establish_validator<O: Borrow<OutAddr>>(&mut self, out_addr: O,
+            pub_info: (Uid, InAddr, PublicKey)) {
+        let mut peer = self.peers.get_mut(out_addr.borrow())
+            .expect(&format!("No peer found with outgoing address: {}", out_addr.borrow()));
+        peer.establish_validator(pub_info);
 
-	}
+    }
 
     /// Removes a peer the list if it exists.
     pub(crate) fn remove<O: Borrow<OutAddr>>(&mut self, out_addr: O) {
@@ -402,19 +422,31 @@ impl Peers {
         self.peers.values()
     }
 
+    /// Returns an iterator over the list of validators.
+    pub(crate) fn validators(&self) -> impl Iterator<Item = &Peer> {
+        self.peers.values().filter(|p| p.is_validator())
+    }
+
     /// Returns the current number of connected peers.
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) fn count_total(&self) -> usize {
         self.peers.len()
     }
 
+    /// Returns the current number of connected and established validators.
+    ///
+    /// This is semi-expensive (O(n)).
+    pub(crate) fn count_validators(&self) -> usize {
+        self.validators().count()
+    }
+
     pub(crate) fn contains_in_addr<I: Borrow<InAddr>>(&self, in_addr: I) -> bool {
-    	for peer in self.peers.values() {
-    		if let Some(peer_in_addr) = peer.in_addr() {
-    			if peer_in_addr == in_addr.borrow() {
-    				return true;
-    			}
-    		}
-    	}
-    	false
+        for peer in self.peers.values() {
+            if let Some(peer_in_addr) = peer.in_addr() {
+                if peer_in_addr == in_addr.borrow() {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

@@ -47,8 +47,8 @@ clear_on_drop = "*"
 [dependencies.hbbft]
 version = "*"
 git = "https://github.com/c0gent/hbbft"
-branch = "master"
-# branch = "afck-dhb-votes-c0gent-publickey"
+# branch = "master"
+branch = "afck-key-shares"
 # branch = "c0gent-publickey-copy"
 # path = "../hbbft"
 features = ["serialization-protobuf"]
