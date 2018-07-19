@@ -66,10 +66,13 @@ use peer::{Peer, PeerHandler, Peers};
 
 const BATCH_SIZE: usize = 150;
 const TXN_BYTES: usize = 10;
-const NEW_TXNS_PER_INTERVAL: usize = 100;
+const NEW_TXNS_PER_INTERVAL: usize = 40;
 
 // The minimum number of peers needed to spawn a HB instance.
 const HB_PEER_MINIMUM_COUNT: usize = 4;
+
+// Number of times to attempt wire message re-send.
+const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 
 
 
@@ -217,6 +220,7 @@ pub struct NetworkNodeInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkState {
     None,
+    Unknown(Vec<NetworkNodeInfo>),
     AwaitingMorePeers(Vec<NetworkNodeInfo>),
     Active(Vec<NetworkNodeInfo>),
 }
@@ -225,7 +229,7 @@ pub enum NetworkState {
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessageKind {
-    HelloFromValidator(Uid, InAddr, PublicKey),
+    HelloFromValidator(Uid, InAddr, PublicKey, NetworkState),
     HelloRequestChangeAdd(Uid, InAddr, PublicKey),
     WelcomeReceivedChangeAdd(Uid, PublicKey, NetworkState),
     RequestNetworkState,
@@ -247,8 +251,9 @@ pub struct WireMessage {
 }
 
 impl WireMessage {
-    pub fn hello_from_validator(uid: Uid, in_addr: InAddr, pk: PublicKey) -> WireMessage {
-        WireMessageKind::HelloFromValidator(uid, in_addr, pk).into()
+    pub fn hello_from_validator(uid: Uid, in_addr: InAddr, pk: PublicKey,
+            net_state: NetworkState) -> WireMessage {
+        WireMessageKind::HelloFromValidator(uid, in_addr, pk, net_state).into()
     }
 
     /// Returns a `HelloRequestChangeAdd` variant.
@@ -688,7 +693,7 @@ impl State {
             State::ConnectedValidator { .. } => {
                 NetworkState::Active(peer_infos)
             },
-            _ => NetworkState::None,
+            _ => NetworkState::Unknown(peer_infos),
         }
     }
 
@@ -775,7 +780,7 @@ struct HydrabadgerInner {
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
 
-    peer_out_queue: RwLock<VecDeque<TargetedMessage<Message, Uid>>>,
+    // peer_out_queue: RwLock<VecDeque<TargetedMessage<Message, Uid>>>,
     // batch_out_queue: RwLock<VecDeque<Step>>,
 
     unhandled_inputs: RwLock<VecDeque<()>>,
@@ -787,6 +792,8 @@ pub struct HydrabadgerHandler {
     hdb: Hydrabadger,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_rx: InternalRx,
+    // Outgoing wire message queue:
+    wire_queue: SegQueue<(Uid, WireMessage, usize)>,
     // Output from HoneyBadger:
     step_queue: SegQueue<Step>,
 }
@@ -806,6 +813,14 @@ impl HydrabadgerHandler {
         }
     }
 
+    // `tar_uid` of `None` sends to all peers.
+    fn wire_to(&self, tar_uid: Uid, msg: WireMessage, retry_count: usize, peers: &Peers) {
+        match peers.get_by_uid(&tar_uid) {
+            Some(p) => p.tx().unbounded_send(msg).unwrap(),
+            None => self.wire_queue.push((tar_uid, msg, retry_count + 1)),
+        }
+    }
+
     // fn send_welcome(&self, src_addr: OutAddr, state: &mut State, peers: &Peers) {
     //     // Get the current `NetworkState`:
     //     let net_state = state.network_state(&peers);
@@ -816,6 +831,38 @@ impl HydrabadgerHandler {
     //             self.hdb.inner.uid.clone(), state.local_public_key(), net_state)
     //     ).unwrap();
     // }
+
+    fn handle_net_state(&self, net_state: NetworkState, state: &mut State, peers: &Peers) {
+        let peer_infos;
+        match net_state {
+            NetworkState::AwaitingMorePeers(p_infos) | NetworkState::Unknown(p_infos) => {
+                peer_infos = p_infos;
+                state.set_connected_awaiting_more_peers();
+                // Do other stuff?
+            },
+            NetworkState::Active(p_infos) => {
+                peer_infos = p_infos;
+                // state.set_connected_observer();
+                // TODO: Do other stuff..
+                // unimplemented!();
+                // FIXME: DO NOTHING FOR NOW
+            },
+            NetworkState::None => panic!("`NetworkState::None` received."),
+        }
+
+        // Connect to all newly discovered peers.
+        for peer_info in peer_infos.iter() {
+            // Only connect with peers which are not already
+            // connected (and are not us).
+            if peer_info.in_addr != self.hdb.inner.addr &&
+                    !peers.contains_in_addr(&peer_info.in_addr) {
+                let local_pk = self.hdb.inner.secret_key.public_key();
+                tokio::spawn(self.hdb.clone().connect_outgoing(
+                    peer_info.in_addr.0, local_pk,
+                    Some((peer_info.uid, peer_info.in_addr, peer_info.pk))));
+            }
+        }
+    }
 
     fn handle_new_established_peer(&self, src_uid: Uid, src_addr: OutAddr, src_pk: PublicKey,
             state: &mut State, peers: &Peers) {
@@ -837,8 +884,10 @@ impl HydrabadgerHandler {
                         self.hdb.inner.secret_key.clone(), peers);
 
                     info!("KEY GENERATION: Sending initial proposals and our own acceptance.");
-                    self.wire_to_validators(WireMessage::hello_from_validator(
-                        local_uid, local_in_addr, local_sk), peers);
+                    self.wire_to_validators(
+                        WireMessage::hello_from_validator(
+                            local_uid, local_in_addr, local_sk, state.network_state(&peers)),
+                        peers);
                     self.wire_to_validators(WireMessage::key_gen_proposal(proposal), peers);
                     self.wire_to_validators(WireMessage::key_gen_proposal_accept(accept), peers);
                 }
@@ -955,16 +1004,6 @@ impl HydrabadgerHandler {
                 let peers = self.hdb.peers();
                 state.outgoing_connection_added(&peers);
             },
-            // InternalMessageKind::NewTransactions(txns) => {
-            //     info!("Pushing {} new user transactions to queue.", txns.len());
-            //      if let Some(step_res) = state.input(QhbInput::User(txns)) {
-            //         let step = step_res.map_err(|err| {
-            //             error!("Honey Badger input error: {:?}", err);
-            //             Error::HbStepError
-            //         })?;
-            //         self.step_queue.push(step);
-            //     }
-            // },
             InternalMessageKind::HbMessage(msg) => {
                 // info!("Handling incoming message: {:?}", msg);
                 // qhb.handle_message(&src_uid, msg).unwrap();
@@ -1016,13 +1055,16 @@ impl HydrabadgerHandler {
                 // This is sent on the wire to ensure that we have all of the
                 // relevant details for a peer (generally preceeding other
                 // messages which may arrive before `Welcome...`.
-                WireMessageKind::HelloFromValidator(src_uid_new, src_in_addr, src_pk) => {
+                WireMessageKind::HelloFromValidator(src_uid_new, src_in_addr, src_pk, net_state) => {
                     debug!("Received hello from {}", src_uid_new);
                     let mut peers = self.hdb.peers_mut();
                     match peers.establish_validator(src_out_addr, (src_uid_new, src_in_addr, src_pk)) {
                         true => assert!(src_uid_new == src_uid.clone().unwrap()),
                         false => assert!(src_uid.is_none()),
                     }
+
+                    // Modify state accordingly:
+                    self.handle_net_state(net_state, state, &peers);
                 }
                 // Received from recently new outgoing connection:
                 WireMessageKind::WelcomeReceivedChangeAdd(src_uid_new, src_pk, net_state) => {
@@ -1034,34 +1076,8 @@ impl HydrabadgerHandler {
                     peers.establish_validator(src_out_addr,
                         (src_uid_new, InAddr(src_out_addr.0), src_pk));
 
-                    let peer_infos;
-                    match net_state {
-                        NetworkState::AwaitingMorePeers(p_infos) => {
-                            peer_infos = p_infos;
-                            state.set_connected_awaiting_more_peers();
-                            // Do other stuff?
-                        },
-                        NetworkState::Active(p_infos) => {
-                            peer_infos = p_infos;
-                            state.set_connected_observer();
-                            // TODO: Do other stuff..
-                            // unimplemented!();
-                        },
-                        NetworkState::None => panic!("`NetworkState::None` received."),
-                    }
-
-                    // Connect to all newly discovered peers.
-                    for peer_info in peer_infos.iter() {
-                        // Only connect with peers which are not already
-                        // connected (and are not us).
-                        if peer_info.in_addr != self.hdb.inner.addr &&
-                                !peers.contains_in_addr(&peer_info.in_addr) {
-                            let local_pk = self.hdb.inner.secret_key.public_key();
-                            tokio::spawn(self.hdb.clone().connect_outgoing(
-                                peer_info.in_addr.0, local_pk,
-                                Some((peer_info.uid, peer_info.in_addr, peer_info.pk))));
-                        }
-                    }
+                    // Modify state accordingly:
+                    self.handle_net_state(net_state, state, &peers);
 
                     // Modify state accordingly:
                     self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk, state, &peers);
@@ -1116,19 +1132,25 @@ impl Future for HydrabadgerHandler {
             };
         }
 
+        let peers = self.hdb.peers();
+
+        // Process outgoing wire queue:
+        while let Some((tar_uid, msg, retry_count)) = self.wire_queue.try_pop() {
+            if retry_count < WIRE_MESSAGE_RETRY_MAX {
+                self.wire_to(tar_uid, msg, retry_count + 1, &peers);
+            }
+        }
+
         // Forward outgoing messages:
         if let Some(qhb) = state.qhb_mut() {
-            let peers = self.hdb.peers();
-
             for (i, hb_msg) in qhb.message_iter().enumerate() {
-                debug!("Forwarding message: {:?}", hb_msg);
+                trace!("Forwarding message: {:?}", hb_msg);
                 match hb_msg.target {
                     Target::Node(p_uid) => {
-                        peers.get_by_uid(&p_uid).expect("Unable to get peer by UID")
-                            .tx().unbounded_send(WireMessage::message(hb_msg.message)).unwrap();
+                        self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
                     },
                     Target::All => {
-                        self.wire_to_all(WireMessage::message(hb_msg.message.clone()), &*peers);
+                        self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
                     },
                 }
 
@@ -1138,6 +1160,8 @@ impl Future for HydrabadgerHandler {
                 }
             }
         }
+
+        drop(peers);
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
@@ -1183,7 +1207,7 @@ impl Hydrabadger {
             peers: RwLock::new(Peers::new()),
             state: RwLock::new(State::disconnected(/*uid, InAddr(addr),*/ /*secret_key*/)),
             peer_internal_tx,
-            peer_out_queue: RwLock::new(VecDeque::new()),
+            // peer_out_queue: RwLock::new(VecDeque::new()),
             // batch_out_queue: RwLock::new(VecDeque::new()),
             unhandled_inputs: RwLock::new(VecDeque::new()),
         });
@@ -1196,6 +1220,7 @@ impl Hydrabadger {
         let handler = HydrabadgerHandler {
             hdb: hdb.clone(),
             peer_internal_rx,
+            wire_queue: SegQueue::new(),
             step_queue: SegQueue::new(),
         };
 
