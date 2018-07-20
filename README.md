@@ -56,3 +56,10 @@ very well yet.
   causing occasional halting. Causes unclear.
 * `BatchDeserializationFailed` errors are common and appear to halt consensus.
   New issue creation pending investigation.
+
+
+### License
+
+[![License: LGPL v3.0](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+
+This project is licensed under the GNU Lesser General Public License v3.0. See the [LICENSE](LICENSE) file for details.
