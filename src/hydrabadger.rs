@@ -244,8 +244,8 @@ pub enum WireMessageKind {
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
     Message(Message),
-    KeyGenProposal(Part),
-    KeyGenProposalAck(Ack),
+    KeyGenPart(Part),
+    KeyGenPartAck(Ack),
     // TargetedMessage(TargetedMessage<Uid>),
 }
 
@@ -273,12 +273,12 @@ impl WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, pk, net_state) }
     }
 
-    pub fn key_gen_proposal(proposal: Part) -> WireMessage {
-        WireMessage { kind: WireMessageKind::KeyGenProposal(proposal) }
+    pub fn key_gen_part(part: Part) -> WireMessage {
+        WireMessage { kind: WireMessageKind::KeyGenPart(part) }
     }
 
-    pub fn key_gen_proposal_accept(outcome: Ack) -> WireMessage {
-        WireMessageKind::KeyGenProposalAck(outcome).into()
+    pub fn key_gen_part_ack(outcome: Ack) -> WireMessage {
+        WireMessageKind::KeyGenPartAck(outcome).into()
     }
 
     /// Returns a `Message` variant.
@@ -489,7 +489,7 @@ pub(crate) enum State {
     ConnectedGeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
-        acceptance_count: usize,
+        ack_count: usize,
         // Queued input to HoneyBadger:
         iom_queue: SegQueue<InputOrMessage>,
     },
@@ -549,42 +549,47 @@ impl State {
     }
 
     /// Sets the state to `ConnectedAwaitingMorePeers`.
-    fn set_generating_keys(&mut self, local_id: &Uid, local_sk: SecretKey, peers: &Peers)
+    fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers)
             -> (Part, Ack) {
-        let (proposal, accept);
+        let (part, ack);
         *self = match *self {
             State::ConnectedAwaitingMorePeers { ref mut iom_queue } => {
                 // let secret_key = secret_key.clone();
-                let (threshold, node_count) = (1, 5);
+                let threshold = HB_PEER_MINIMUM_COUNT / 3;
 
                 let mut public_keys: BTreeMap<Uid, PublicKey> = peers.validators().map(|p| {
                     p.pub_info().map(|(uid, _, pk)| (*uid, *pk)).unwrap()
                 }).collect();
 
                 let pk = local_sk.public_key();
-                public_keys.insert(*local_id, pk);
+                public_keys.insert(*local_uid, pk);
 
-                let (mut sync_key_gen, opt_proposal) = SyncKeyGen::new(*local_id, local_sk,
+                let (mut sync_key_gen, opt_part) = SyncKeyGen::new(*local_uid, local_sk,
                     public_keys.clone(), threshold);
-                proposal = opt_proposal.expect("This node is not a validator (somehow)!");
+                part = opt_part.expect("This node is not a validator (somehow)!");
 
-                // Handle our own proposal (weird).
-                info!("KEY GENERATION: Processing our own proposal...");
-                accept = match sync_key_gen.handle_part(&local_id, proposal.clone()) {
-                    Some(PartOutcome::Valid(accept)) => accept,
-                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid proposal \
+                info!("KEY GENERATION: Handling our own `Part`...");
+                ack = match sync_key_gen.handle_part(&local_uid, part.clone()) {
+                    Some(PartOutcome::Valid(ack)) => ack,
+                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
                         (FIXME: handle): {:?}", faults),
                     None => unimplemented!(),
                 };
 
+                info!("KEY GENERATION: Handling our own `Ack`...");
+                let fault_log = sync_key_gen.handle_ack(local_uid, ack.clone());
+                if !fault_log.is_empty() {
+                    error!("Errors acknowledging part (from self):\n {:?}", fault_log);
+                }
+
                 State::ConnectedGeneratingKeys { sync_key_gen: Some(sync_key_gen),
-                    public_key: Some(pk), acceptance_count: 1, iom_queue: iom_queue.take().unwrap() }
+                    public_key: Some(pk), ack_count: 1, iom_queue: iom_queue.take().unwrap() }
             },
             _ => panic!("State::set_generating_keys: \
                 Must be State::ConnectedAwaitingMorePeers"),
         };
 
-        (proposal, accept)
+        (part, ack)
     }
 
 
@@ -886,16 +891,16 @@ impl HydrabadgerHandler {
                     let local_in_addr = self.hdb.inner.addr;
                     let local_sk = self.hdb.inner.secret_key.public_key();
 
-                    let (proposal, accept) = state.set_generating_keys(&local_uid,
+                    let (part, ack) = state.set_generating_keys(&local_uid,
                         self.hdb.inner.secret_key.clone(), peers);
 
-                    info!("KEY GENERATION: Sending initial proposals and our own acceptance.");
+                    info!("KEY GENERATION: Sending initial parts and our own ack.");
                     self.wire_to_validators(
                         WireMessage::hello_from_validator(
                             local_uid, local_in_addr, local_sk, state.network_state(&peers)),
                         peers);
-                    self.wire_to_validators(WireMessage::key_gen_proposal(proposal), peers);
-                    self.wire_to_validators(WireMessage::key_gen_proposal_accept(accept), peers);
+                    self.wire_to_validators(WireMessage::key_gen_part(part), peers);
+                    self.wire_to_validators(WireMessage::key_gen_part_ack(ack), peers);
                 }
             },
             StateDsct::ConnectedGeneratingKeys { .. } => {
@@ -914,56 +919,62 @@ impl HydrabadgerHandler {
         }
     }
 
-    fn handle_key_gen_proposal(&self, src_uid: &Uid, proposal: Part, state: &mut State) {
+    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
         match state {
-            State::ConnectedGeneratingKeys { ref mut sync_key_gen, .. } => {
+            State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
                 // TODO: Move this match block into a function somewhere for re-use:
-                info!("KEY GENERATION: Processing proposal from {}...", src_uid);
-                let accept = match sync_key_gen.as_mut().unwrap().handle_part(src_uid, proposal) {
-                    Some(PartOutcome::Valid(accept)) => accept,
-                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid proposal \
+                info!("KEY GENERATION: Processing part from {}...", src_uid);
+                let ack = match sync_key_gen.as_mut().unwrap().handle_part(src_uid, part) {
+                    Some(PartOutcome::Valid(ack)) => ack,
+                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
                         (FIXME: handle): {:?}", faults),
                     None => {
                         error!("`QueueingHoneyBadger::handle_part` returned `None`.");
                         return;
                     }
                 };
+
+                // Handle our own ack (TODO: Move this for re-use):
+                let fault_log = sync_key_gen.as_mut().unwrap().handle_ack(src_uid, ack.clone());
+                if !fault_log.is_empty() {
+                    error!("Errors acknowledging part:\n {:?}", fault_log);
+                }
+                *ack_count += 1;
+
                 let peers = self.hdb.peers();
-                info!("KEY GENERATION: Proposal from '{}' accepted. Broadcasting...", src_uid);
-                self.wire_to_validators(WireMessage::key_gen_proposal_accept(accept), &peers);
+                info!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting...", src_uid);
+                self.wire_to_validators(WireMessage::key_gen_part_ack(ack), &peers);
             }
-            _ => panic!("::handle_key_gen_proposal: State must be `ConnectedGeneratingKeys`."),
+            _ => panic!("::handle_key_gen_part: State must be `ConnectedGeneratingKeys`."),
         }
     }
 
-    fn handle_key_gen_proposal_accept(&self, src_uid: &Uid, accept: Ack, state: &mut State, peers: &Peers) {
+    fn handle_key_gen_part_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers) {
         let mut complete = false;
         match state {
-            State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut acceptance_count, .. } => {
+            State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
                 let mut sync_key_gen = sync_key_gen.as_mut().unwrap();
-                info!("KEY GENERATION: Processing acceptance from '{}'...", src_uid);
-                let fault_log = sync_key_gen.handle_ack(src_uid, accept);
+                info!("KEY GENERATION: Processing ack from '{}'...", src_uid);
+                let fault_log = sync_key_gen.handle_ack(src_uid, ack);
                 if !fault_log.is_empty() {
-                    error!("Errors accepting proposal:\n {:?}", fault_log);
+                    error!("Errors acknowledging part:\n {:?}", fault_log);
                 }
-                *acceptance_count += 1;
+                *ack_count += 1;
 
                 debug!("   Peers complete: {}", sync_key_gen.count_complete());
-                debug!("   Proposals acceptances: {}", acceptance_count);
+                debug!("   Part acks: {}", ack_count);
 
-                // *acceptance_count >= HB_PEER_MINIMUM_COUNT &&
-                if sync_key_gen.count_complete() > HB_PEER_MINIMUM_COUNT {
-                    // assert_eq!(sync_key_gen.count_complete(), *acceptance_count);
-                    // debug!("KEY GENERATION: SyncKeyGen::count_complete() -> {}",
-                    //     sync_key_gen.count_complete());
+                const NODE_N: usize = HB_PEER_MINIMUM_COUNT + 1;
+                if sync_key_gen.count_complete() >= NODE_N &&
+                        *ack_count >= NODE_N * NODE_N {
                     assert!(sync_key_gen.is_ready());
                     complete = true;
                 }
             },
             State::ConnectedValidator { .. } | State::ConnectedObserver { .. } => {
-                // Extra incoming accept messages. Ignore.
+                debug!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
             }
-            _ => panic!("::handle_key_gen_proposal_accept: State must be `ConnectedGeneratingKeys`."),
+            _ => panic!("::handle_key_gen_part_ack: State must be `ConnectedGeneratingKeys`."),
         }
 
         if complete {
@@ -1090,12 +1101,12 @@ impl HydrabadgerHandler {
                     // Modify state accordingly:
                     self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk, state, &peers);
                 },
-                WireMessageKind::KeyGenProposal(proposal) => {
-                    self.handle_key_gen_proposal(&src_uid.unwrap(), proposal, state);
+                WireMessageKind::KeyGenPart(part) => {
+                    self.handle_key_gen_part(&src_uid.unwrap(), part, state);
                 },
-                WireMessageKind::KeyGenProposalAck(accept) => {
+                WireMessageKind::KeyGenPartAck(ack) => {
                     let peers = self.hdb.peers();
-                    self.handle_key_gen_proposal_accept(&src_uid.unwrap(), accept, state, &peers);
+                    self.handle_key_gen_part_ack(&src_uid.unwrap(), ack, state, &peers);
                 },
                 _ => {},
             },
@@ -1174,7 +1185,7 @@ impl Future for HydrabadgerHandler {
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
             if step.output.len() > 0 {
-                info!("NEW STEP STEP OUTPUT:",);
+                info!("NEW STEP OUTPUT:",);
                 for output in step.output.drain(..) {
                     info!("    BATCH: \n{:?}", output);
                     // TODO: Something useful!

@@ -9,15 +9,15 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
 1. `git clone https://github.com/c0gent/hydrabadger`
 2. `cd hydrabadger`
-3. `./peer0`
+3. `./run-node 0`
 
 #### Additional peers
 
 1. Open a new terminal window.
 2. `cd {...}/hydrabadger`
-3. `./peer1`
+3. `./run-node 1`
 
-4. (Repeat 1 and 2), `./peer2`, `./peer3`, `./peer4`
+4. (Repeat 1 and 2), `./run-node 2`, `./run-node 3`, `./run-node 4`
 
 Each peer will generate a number of random transactions at regular intervals,
 process them accordingly, and output complete batches.
@@ -55,7 +55,7 @@ very well yet.
   `Node {..} received multiple Readys from {..}` messages which *may* be
   causing occasional halting. Causes unclear.
 * `BatchDeserializationFailed` errors are common and appear to halt consensus.
-  New issue creation pending investigation.
+  New issue creation pending investigation [FIXED?].
 
 
 ### License

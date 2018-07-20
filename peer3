@@ -1,3 +1,0 @@
-#/bin/bash
-HYDRABADGER_LOG=peer_node::hydrabadger=error,info,debug cargo run --bin peer_node --release -- -b localhost:3003 -r localhost:3002 -r localhost:3004
-
