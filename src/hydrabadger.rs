@@ -948,12 +948,11 @@ impl HydrabadgerHandler {
                 }
                 *acceptance_count += 1;
 
-                debug!("   Peers complete: {}",
-                        sync_key_gen.count_complete());
+                debug!("   Peers complete: {}", sync_key_gen.count_complete());
                 debug!("   Proposals acceptances: {}", acceptance_count);
 
-                if *acceptance_count >= HB_PEER_MINIMUM_COUNT &&
-                        sync_key_gen.count_complete() >= HB_PEER_MINIMUM_COUNT {
+                // *acceptance_count >= HB_PEER_MINIMUM_COUNT &&
+                if sync_key_gen.count_complete() > HB_PEER_MINIMUM_COUNT {
                     // assert_eq!(sync_key_gen.count_complete(), *acceptance_count);
                     // debug!("KEY GENERATION: SyncKeyGen::count_complete() -> {}",
                     //     sync_key_gen.count_complete());
