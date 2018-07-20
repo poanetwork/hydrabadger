@@ -28,11 +28,9 @@ already built) for command line options (more coming soon!).
 
 ### Current State
 
-Highly unstable and evolving rapidly.
-
 Network initialization (with 5 nodes only), transaction generation, consensus,
-and batch outputs are working. Batch outputs are currently just printed to the
-log.
+and batch outputs are all generally working. Batch outputs for each epoch are
+printed to the log.
 
 Overall the client is fragile and doesn't handle deviation from simple usage
 very well yet.
@@ -50,3 +48,11 @@ very well yet.
   * If too many nodes disconnect, the consensus process halts for all nodes
     (as expected). No means of reconnection or node removal is yet in place.
 * **Much, much more...**
+
+#### Other Issues
+
+* `InvalidAckMessage` returned from `SyncKeyGen::handle_ack` seems to cause
+  `Node {..} received multiple Readys from {..}` messages which *may* be
+  causing occasional halting. Causes unclear.
+* `BatchDeserializationFailed` errors are common and appear to halt consensus.
+  New issue creation pending investigation.

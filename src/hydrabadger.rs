@@ -54,7 +54,7 @@ use hbbft::{
         poly::{Poly, Commitment},
         SecretKeySet, PublicKey, PublicKeySet, SecretKey, SignatureShare,
     },
-    sync_key_gen::{SyncKeyGen, Propose, ProposeOutcome, Accept},
+    sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, NetworkInfo, SourcedMessage, Target, TargetedMessage},
     proto::message::BroadcastProto,
     dynamic_honey_badger::Message as DhbMessage,
@@ -98,7 +98,7 @@ type Message = DhbMessage<Uid>;
 
 
 /// A unique identifier.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Uid(pub(crate) Uuid);
 
 impl Uid {
@@ -120,6 +120,12 @@ impl Rand for Uid {
 }
 
 impl fmt::Display for Uid {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for Uid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::LowerHex::fmt(&self.0, f)
     }
@@ -172,7 +178,7 @@ pub enum Error {
     HydrabadgerHandlerPoll,
     // FIXME: Make honeybadger error thread safe.
     #[fail(display = "QueuingHoneyBadger propose error")]
-    QhbPropose,
+    QhbPart,
     /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "DynamicHoneyBadger error")]
     Dhb,
@@ -238,8 +244,8 @@ pub enum WireMessageKind {
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
     Message(Message),
-    KeyGenProposal(Propose),
-    KeyGenProposalAccept(Accept),
+    KeyGenProposal(Part),
+    KeyGenProposalAck(Ack),
     // TargetedMessage(TargetedMessage<Uid>),
 }
 
@@ -267,12 +273,12 @@ impl WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, pk, net_state) }
     }
 
-    pub fn key_gen_proposal(proposal: Propose) -> WireMessage {
+    pub fn key_gen_proposal(proposal: Part) -> WireMessage {
         WireMessage { kind: WireMessageKind::KeyGenProposal(proposal) }
     }
 
-    pub fn key_gen_proposal_accept(outcome: Accept) -> WireMessage {
-        WireMessageKind::KeyGenProposalAccept(outcome).into()
+    pub fn key_gen_proposal_accept(outcome: Ack) -> WireMessage {
+        WireMessageKind::KeyGenProposalAck(outcome).into()
     }
 
     /// Returns a `Message` variant.
@@ -544,7 +550,7 @@ impl State {
 
     /// Sets the state to `ConnectedAwaitingMorePeers`.
     fn set_generating_keys(&mut self, local_id: &Uid, local_sk: SecretKey, peers: &Peers)
-            -> (Propose, Accept) {
+            -> (Part, Ack) {
         let (proposal, accept);
         *self = match *self {
             State::ConnectedAwaitingMorePeers { ref mut iom_queue } => {
@@ -558,15 +564,15 @@ impl State {
                 let pk = local_sk.public_key();
                 public_keys.insert(*local_id, pk);
 
-                let (mut sync_key_gen, opt_proposal) = SyncKeyGen::new(local_id, local_sk,
+                let (mut sync_key_gen, opt_proposal) = SyncKeyGen::new(*local_id, local_sk,
                     public_keys.clone(), threshold);
                 proposal = opt_proposal.expect("This node is not a validator (somehow)!");
 
                 // Handle our own proposal (weird).
                 info!("KEY GENERATION: Processing our own proposal...");
-                accept = match sync_key_gen.handle_propose(local_id, proposal.clone()) {
-                    Some(ProposeOutcome::Valid(accept)) => accept,
-                    Some(ProposeOutcome::Invalid(faults)) => panic!("Invalid proposal \
+                accept = match sync_key_gen.handle_part(&local_id, proposal.clone()) {
+                    Some(PartOutcome::Valid(accept)) => accept,
+                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid proposal \
                         (FIXME: handle): {:?}", faults),
                     None => unimplemented!(),
                 };
@@ -574,7 +580,7 @@ impl State {
                 State::ConnectedGeneratingKeys { sync_key_gen: Some(sync_key_gen),
                     public_key: Some(pk), acceptance_count: 1, iom_queue: iom_queue.take().unwrap() }
             },
-            _ => panic!("hydrabadger::State::set_generating_keys: \
+            _ => panic!("State::set_generating_keys: \
                 Must be State::ConnectedAwaitingMorePeers"),
         };
 
@@ -630,7 +636,7 @@ impl State {
 
                 State::ConnectedValidator { qhb: Some(qhb) }
             }
-            _ => panic!("hydrabadger::State::set_connected_validator: \
+            _ => panic!("State::set_connected_validator: \
                 State must be `ConnectedGeneratingKeys`."),
         };
     }
@@ -664,7 +670,7 @@ impl State {
                     State::Disconnected { /*secret_key: secret_key.clone()*/ }
                 },
                 _ => {
-                    error!("hydrabadger::State::peer_connection_dropped: No peers connected!");
+                    error!("State::peer_connection_dropped: No peers connected!");
                     return;
                 },
             }
@@ -908,16 +914,19 @@ impl HydrabadgerHandler {
         }
     }
 
-    fn handle_key_gen_proposal(&self, src_uid: &Uid, proposal: Propose, state: &mut State) {
+    fn handle_key_gen_proposal(&self, src_uid: &Uid, proposal: Part, state: &mut State) {
         match state {
             State::ConnectedGeneratingKeys { ref mut sync_key_gen, .. } => {
                 // TODO: Move this match block into a function somewhere for re-use:
                 info!("KEY GENERATION: Processing proposal from {}...", src_uid);
-                let accept = match sync_key_gen.as_mut().unwrap().handle_propose(src_uid, proposal) {
-                    Some(ProposeOutcome::Valid(accept)) => accept,
-                    Some(ProposeOutcome::Invalid(faults)) => panic!("Invalid proposal \
+                let accept = match sync_key_gen.as_mut().unwrap().handle_part(src_uid, proposal) {
+                    Some(PartOutcome::Valid(accept)) => accept,
+                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid proposal \
                         (FIXME: handle): {:?}", faults),
-                    None => unimplemented!(),
+                    None => {
+                        error!("`QueueingHoneyBadger::handle_part` returned `None`.");
+                        return;
+                    }
                 };
                 let peers = self.hdb.peers();
                 info!("KEY GENERATION: Proposal from '{}' accepted. Broadcasting...", src_uid);
@@ -927,13 +936,13 @@ impl HydrabadgerHandler {
         }
     }
 
-    fn handle_key_gen_proposal_accept(&self, src_uid: &Uid, accept: Accept, state: &mut State, peers: &Peers) {
+    fn handle_key_gen_proposal_accept(&self, src_uid: &Uid, accept: Ack, state: &mut State, peers: &Peers) {
         let mut complete = false;
         match state {
             State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut acceptance_count, .. } => {
                 let mut sync_key_gen = sync_key_gen.as_mut().unwrap();
                 info!("KEY GENERATION: Processing acceptance from '{}'...", src_uid);
-                let fault_log = sync_key_gen.handle_accept(src_uid, accept);
+                let fault_log = sync_key_gen.handle_ack(src_uid, accept);
                 if !fault_log.is_empty() {
                     error!("Errors accepting proposal:\n {:?}", fault_log);
                 }
@@ -1085,7 +1094,7 @@ impl HydrabadgerHandler {
                 WireMessageKind::KeyGenProposal(proposal) => {
                     self.handle_key_gen_proposal(&src_uid.unwrap(), proposal, state);
                 },
-                WireMessageKind::KeyGenProposalAccept(accept) => {
+                WireMessageKind::KeyGenProposalAck(accept) => {
                     let peers = self.hdb.peers();
                     self.handle_key_gen_proposal_accept(&src_uid.unwrap(), accept, state, &peers);
                 },
