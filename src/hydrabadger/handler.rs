@@ -73,7 +73,8 @@ impl Handler {
                 //     Received `WireMessageKind::WelcomeRequestChangeAdd` or \
                 //     `InternalMessageKind::NewIncomingConnection` while \
                 //     `StateDsct::Disconnected` or `DeterminingNetworkState`.");
-                state.peer_connection_added(&peers);
+                state.update_peer_connection_added(&peers);
+                self.hdb.set_state_discriminant(state.discriminant());
             },
             StateDsct::ConnectedAwaitingMorePeers => {
                 if peers.count_validators() >= HB_PEER_MINIMUM_COUNT {
@@ -85,6 +86,7 @@ impl Handler {
 
                     let (part, ack) = state.set_generating_keys(&local_uid,
                         self.hdb.secret_key().clone(), peers);
+                    self.hdb.set_state_discriminant(state.discriminant());
 
                     info!("KEY GENERATION: Sending initial parts and our own ack.");
                     self.wire_to_validators(
@@ -164,7 +166,7 @@ impl Handler {
                 }
             },
             State::ConnectedValidator { .. } | State::ConnectedObserver { .. } => {
-                debug!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
+                error!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
             }
             _ => panic!("::handle_key_gen_part_ack: State must be `ConnectedGeneratingKeys`."),
         }
@@ -172,6 +174,7 @@ impl Handler {
         if complete {
             info!("== INITIALIZING HONEY BADGER ==");
             state.set_connected_validator(*self.hdb.uid(), self.hdb.secret_key().clone(), peers);
+            self.hdb.set_state_discriminant(state.discriminant());
         }
     }
 
@@ -180,11 +183,13 @@ impl Handler {
         match net_state {
             NetworkState::Unknown(p_infos) => {
                 peer_infos = p_infos;
-                state.peer_connection_added(peers);
+                state.update_peer_connection_added(peers);
+                self.hdb.set_state_discriminant(state.discriminant());
             }
             NetworkState::AwaitingMorePeers(p_infos) => {
                 peer_infos = p_infos;
                 state.set_connected_awaiting_more_peers();
+                self.hdb.set_state_discriminant(state.discriminant());
             },
             NetworkState::GeneratingKeys(p_infos) => {
                 peer_infos = p_infos;
@@ -220,7 +225,8 @@ impl Handler {
                 // self.hdb.peer_internal_tx.unbounded_send(InternalMessage::input(
         //     uid, self.out_addr, Input::Change(Change::Remove(uid)))).unwrap();
 
-        state.peer_connection_dropped(peers);
+        state.update_peer_connection_dropped(peers);
+        self.hdb.set_state_discriminant(state.discriminant());
 
         // TODO: Send a node removal (Change-Remove) vote?
 
@@ -269,6 +275,7 @@ impl Handler {
                 match state.discriminant() {
                     StateDsct::Disconnected | StateDsct::DeterminingNetworkState  => {
                         state.set_connected_awaiting_more_peers();
+                        self.hdb.set_state_discriminant(state.discriminant());
                         // state.peer_connection_added(&peers);
                     },
                     _ => {},
@@ -295,7 +302,8 @@ impl Handler {
                 debug_assert!(src_uid.is_none());
 
                 let peers = self.hdb.peers();
-                state.peer_connection_added(&peers);
+                state.update_peer_connection_added(&peers);
+                self.hdb.set_state_discriminant(state.discriminant());
             },
             InternalMessageKind::HbMessage(msg) => {
                 // info!("Handling incoming message: {:?}", msg);

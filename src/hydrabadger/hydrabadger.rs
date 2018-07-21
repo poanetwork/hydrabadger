@@ -1,12 +1,15 @@
 //! A hydrabadger consensus node.
 //!
 
-// #![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
-//     unreachable_code)]
+#![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
+    unreachable_code)]
 
 use std::{
     time::{Duration, Instant},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     collections::HashSet,
     net::SocketAddr,
 };
@@ -29,7 +32,7 @@ use hbbft::{
 use peer::{PeerHandler, Peers};
 use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
     OutAddr, InAddr,  Uid, InternalTx, Transaction};
-use super::{Error, State, Handler};
+use super::{Error, State, StateDsct, Handler};
 use super::{TXN_BYTES, NEW_TXN_INTERVAL_MS, NEW_TXNS_PER_INTERVAL};
 
 
@@ -50,6 +53,7 @@ struct Inner {
 
     /// The current state containing HB when connected.
     state: RwLock<State>,
+    state_dsct: AtomicUsize,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
@@ -77,6 +81,7 @@ impl Hydrabadger {
             secret_key,
             peers: RwLock::new(Peers::new()),
             state: RwLock::new(State::disconnected()),
+            state_dsct: AtomicUsize::new(0),
             peer_internal_tx,
         });
 
@@ -105,6 +110,15 @@ impl Hydrabadger {
     pub(crate) fn state_mut(&self) -> RwLockWriteGuard<State> {
         let state = self.inner.state.write();
         state
+    }
+
+    pub fn state_discriminant(&self) -> StateDsct {
+        self.inner.state_dsct.load(Ordering::Acquire).into()
+    }
+
+    /// Sets the publicly visible state discriminant and returns the previous value.
+    pub(super) fn set_state_discriminant(&self, dsct: StateDsct) -> usize {
+        self.inner.state_dsct.swap(dsct.into(), Ordering::Release)
     }
 
     /// Returns a reference to the peers list.
@@ -173,7 +187,6 @@ impl Hydrabadger {
             -> impl Future<Item = (), Error = ()> {
         let uid = self.inner.uid.clone();
         let in_addr = self.inner.addr;
-        // let pk = self.state().local_public_key().clone();
         info!("Initiating outgoing connection to: {}", remote_addr);
 
         TcpStream::connect(&remote_addr)
@@ -185,11 +198,6 @@ impl Hydrabadger {
                     WireMessage::hello_request_change_add(uid, in_addr, local_pk));
                 match wire_hello_result {
                     Ok(_) => {
-                        // // Set our state appropriately:
-                        // trace!("::node: Locking 'state' for writing...");
-                        // self.inner.state.write().outgoing_connection_added();
-                        // trace!("::node: State locked and unlocked for writing.");
-
                         let peer = PeerHandler::new(pub_info, self.clone(), wire_msgs);
 
                         self.send_internal(InternalMessage::new_outgoing_connection(*peer.out_addr()));
@@ -211,9 +219,9 @@ impl Hydrabadger {
                 let peers = hdb.peers();
 
                 // Log state:
-                let disc = hdb.state().discriminant();
+                let dsct = hdb.state_discriminant();
                 let peer_count = hdb.peers().count_total();
-                info!("State: {:?}({})", disc, peer_count);
+                info!("State: {:?}({})", dsct, peer_count);
 
                 // Log peer list:
                 let peer_list = hdb.peers().peers().map(|p| {
@@ -227,27 +235,7 @@ impl Hydrabadger {
                 for (peer_addr, _peer) in peers.iter() {
                     trace!("     peer_addr: {}", peer_addr); }
 
-                trace!("::node: Locking 'state' for reading...");
-                if let Some(_) = &hdb.state().qhb() {
-                    trace!("::node: 'state' locked for reading.");
-
-                    // // If no other nodes are connected, panic:
-                    // if qhb.dyn_hb().netinfo().num_nodes() > HB_PEER_MINIMUM_COUNT {
-                    //     info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
-                    //     // Send some random transactions to our internal HB instance.
-                    //     let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| {
-                    //         Transaction::random(TXN_BYTES)
-                    //     }).collect();
-
-                    //     hdb.send_internal(
-                    //         InternalMessage::hb_input(hdb.inner.uid, OutAddr(*hdb.inner.addr), QhbInput::User(txns))
-                    //     );
-                    // } else {
-                    //     error!("Not enough nodes connected. Remote peer count has dropped \
-                    //         below threshold ({}). No", HB_PEER_MINIMUM_COUNT);
-                    //     // panic!("Invalid state");
-                    // }
-
+                if let StateDsct::ConnectedValidator = dsct {
                     info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
                     // Send some random transactions to our internal HB instance.
                     let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| {
@@ -258,8 +246,6 @@ impl Hydrabadger {
                         InternalMessage::hb_input(hdb.inner.uid, OutAddr(*hdb.inner.addr), QhbInput::User(txns))
                     );
                 }
-                trace!("::node: 'state' unlocked for reading.");
-
                 Ok(())
             })
             .map_err(|err| error!("List connection inverval error: {:?}", err))

@@ -27,6 +27,33 @@ pub enum StateDsct {
     ConnectedValidator,
 }
 
+impl From<StateDsct> for usize {
+    fn from(dsct: StateDsct) -> usize {
+        match dsct {
+            StateDsct::Disconnected => 0,
+            StateDsct::DeterminingNetworkState => 1,
+            StateDsct::ConnectedAwaitingMorePeers => 2,
+            StateDsct::ConnectedGeneratingKeys => 3,
+            StateDsct::ConnectedObserver => 4,
+            StateDsct::ConnectedValidator => 5,
+        }
+    }
+}
+
+impl From<usize> for StateDsct {
+    fn from(val: usize) -> StateDsct {
+        match val {
+            0 => StateDsct::Disconnected,
+            1 => StateDsct::DeterminingNetworkState,
+            2 => StateDsct::ConnectedAwaitingMorePeers,
+            3 => StateDsct::ConnectedGeneratingKeys,
+            4 => StateDsct::ConnectedObserver,
+            5 => StateDsct::ConnectedValidator,
+            _ => panic!("Invalid state discriminant."),
+        }
+    }
+}
+
 
 // The current hydrabadger state.
 pub(crate) enum State {
@@ -93,7 +120,7 @@ impl State {
                 State::ConnectedAwaitingMorePeers { iom_queue: Some(SegQueue::new()) }
             },
             _ => {
-                error!("Attempted to set `State::ConnectedAwaitingMorePeers` while connected.");
+                debug!("Attempted to set `State::ConnectedAwaitingMorePeers` while connected.");
                 return
             }
         };
@@ -202,7 +229,7 @@ impl State {
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does
     /// nothing.
-    pub(super) fn peer_connection_added(&mut self, _peers: &Peers) {
+    pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers) {
         let _dsct = self.discriminant();
         *self = match *self {
             State::Disconnected { } => {
@@ -214,7 +241,7 @@ impl State {
     }
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
-    pub(super) fn peer_connection_dropped(&mut self, peers: &Peers) {
+    pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers) {
         *self = match *self {
             State::DeterminingNetworkState { .. } => {
                 if peers.count_total() == 0 {
