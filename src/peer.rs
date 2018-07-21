@@ -11,16 +11,10 @@ use std::{
 };
 use futures::sync::mpsc;
 use tokio::prelude::*;
-use hbbft::{
-    crypto::{
-        PublicKey,
-    },
-};
-use hydrabadger::{ Hydrabadger, InternalMessage, WireMessage, WireMessageKind, WireMessages,
-    WireTx, WireRx, OutAddr, InAddr, Error, Uid};
-
-
-
+use hbbft::crypto::PublicKey;
+use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
+    OutAddr, InAddr, Uid};
+use hydrabadger::{Hydrabadger, Error,};
 
 
 /// The state for each connected client.

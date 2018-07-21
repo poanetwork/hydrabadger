@@ -27,8 +27,9 @@ use hbbft::{
     queueing_honey_badger::{Input as QhbInput},
 };
 use peer::{PeerHandler, Peers};
-use super::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
-    OutAddr, InAddr, Error, Uid, Transaction, InternalTx, State, HydrabadgerHandler};
+use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
+    OutAddr, InAddr,  Uid, InternalTx, Transaction};
+use super::{Error, State, Handler};
 use super::{TXN_BYTES, NEW_TXN_INTERVAL_MS, NEW_TXNS_PER_INTERVAL};
 
 
@@ -36,7 +37,7 @@ use super::{TXN_BYTES, NEW_TXN_INTERVAL_MS, NEW_TXNS_PER_INTERVAL};
 /// The `Arc` wrapped portion of `Hydrabadger`.
 ///
 /// Shared all over the place.
-struct HydrabadgerInner {
+struct Inner {
     /// Node uid:
     uid: Uid,
     /// Incoming connection socket.
@@ -52,19 +53,14 @@ struct HydrabadgerInner {
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
-
-    // peer_out_queue: RwLock<VecDeque<TargetedMessage<Message, Uid>>>,
-    // batch_out_queue: RwLock<VecDeque<Step>>,
-
-    // unhandled_inputs: RwLock<VecDeque<()>>,
 }
 
 
 /// A `HoneyBadger` network node.
 #[derive(Clone)]
 pub struct Hydrabadger {
-    inner: Arc<HydrabadgerInner>,
-    handler: Arc<Mutex<Option<HydrabadgerHandler>>>,
+    inner: Arc<Inner>,
+    handler: Arc<Mutex<Option<Handler>>>,
 }
 
 impl Hydrabadger {
@@ -75,16 +71,13 @@ impl Hydrabadger {
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
 
-        let inner = Arc::new(HydrabadgerInner {
+        let inner = Arc::new(Inner {
             uid,
             addr: InAddr(addr),
             secret_key,
             peers: RwLock::new(Peers::new()),
-            state: RwLock::new(State::disconnected(/*uid, InAddr(addr),*/ /*secret_key*/)),
+            state: RwLock::new(State::disconnected()),
             peer_internal_tx,
-            // peer_out_queue: RwLock::new(VecDeque::new()),
-            // batch_out_queue: RwLock::new(VecDeque::new()),
-            // unhandled_inputs: RwLock::new(VecDeque::new()),
         });
 
         let hdb = Hydrabadger {
@@ -92,21 +85,13 @@ impl Hydrabadger {
             handler: Arc::new(Mutex::new(None)),
         };
 
-        // let handler = HydrabadgerHandler {
-        //     hdb: hdb.clone(),
-        //     peer_internal_rx,
-        //     wire_queue: SegQueue::new(),
-        //     step_queue: SegQueue::new(),
-        // };
-
-
-        *hdb.handler.lock() = Some(HydrabadgerHandler::new(hdb.clone(), peer_internal_rx));
+        *hdb.handler.lock() = Some(Handler::new(hdb.clone(), peer_internal_rx));
 
         hdb
     }
 
     /// Returns the pre-created handler.
-    pub fn handler(&self) -> Option<HydrabadgerHandler> {
+    pub fn handler(&self) -> Option<Handler> {
         self.handler.lock().take()
     }
 
@@ -306,7 +291,7 @@ impl Hydrabadger {
         let generate_txns = self.clone().generate_txns();
 
         let hdb_handler = self.handler()
-            .map_err(|err| error!("HydrabadgerHandler internal error: {:?}", err));
+            .map_err(|err| error!("Handler internal error: {:?}", err));
 
         listen.join4(connect, generate_txns, hdb_handler).map(|(_, _, _, _)| ())
     }

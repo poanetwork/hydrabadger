@@ -14,15 +14,16 @@ use hbbft::{
         Change},
 };
 use peer::Peers;
-use super::{Hydrabadger, InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
-    OutAddr, InAddr, Error, Uid, NetworkState, Step, InternalRx, State, StateDsct,};
+use ::{InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
+    OutAddr, InAddr, Uid, NetworkState, InternalRx, Step};
+use super::{Hydrabadger, Error, State, StateDsct,};
 use super::{HB_PEER_MINIMUM_COUNT, WIRE_MESSAGE_RETRY_MAX};
 
 
 
 
 /// Hydrabadger event (internal message) handler.
-pub struct HydrabadgerHandler {
+pub struct Handler {
     hdb: Hydrabadger,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_rx: InternalRx,
@@ -32,9 +33,9 @@ pub struct HydrabadgerHandler {
     step_queue: SegQueue<Step>,
 }
 
-impl HydrabadgerHandler {
-    pub(super) fn new(hdb: Hydrabadger, peer_internal_rx: InternalRx) -> HydrabadgerHandler {
-         HydrabadgerHandler {
+impl Handler {
+    pub(super) fn new(hdb: Hydrabadger, peer_internal_rx: InternalRx) -> Handler {
+         Handler {
             hdb,
             peer_internal_rx,
             wire_queue: SegQueue::new(),
@@ -68,7 +69,7 @@ impl HydrabadgerHandler {
             state: &mut State, peers: &Peers) {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
-                // panic!("HydrabadgerHandler::handle_new_established_peer: \
+                // panic!("Handler::handle_new_established_peer: \
                 //     Received `WireMessageKind::WelcomeRequestChangeAdd` or \
                 //     `InternalMessageKind::NewIncomingConnection` while \
                 //     `StateDsct::Disconnected` or `DeterminingNetworkState`.");
@@ -97,7 +98,7 @@ impl HydrabadgerHandler {
             StateDsct::ConnectedGeneratingKeys { .. } => {
                 // This *could* be called multiple times when initially
                 // establishing outgoing connections. Do nothing for now.
-                debug!("HydrabadgerHandler::handle_new_established_peer: Ignoring new established \
+                debug!("Handler::handle_new_established_peer: Ignoring new established \
                     peer signal while `StateDsct::ConnectedGeneratingKeys`.");
             },
             StateDsct::ConnectedObserver | StateDsct::ConnectedValidator => {
@@ -253,9 +254,9 @@ impl HydrabadgerHandler {
             -> Result<(), Error> {
         let (src_uid, src_out_addr, w_msg) = i_msg.into_parts();
 
-        // trace!("HydrabadgerHandler::handle_internal_message: Locking 'state' for writing...");
+        // trace!("Handler::handle_internal_message: Locking 'state' for writing...");
         // let mut state = self.hdb.state_mut();
-        // trace!("HydrabadgerHandler::handle_internal_message: 'state' locked for writing.");
+        // trace!("Handler::handle_internal_message: 'state' locked for writing.");
 
         match w_msg {
             // New incoming connection:
@@ -365,12 +366,12 @@ impl HydrabadgerHandler {
             },
         }
 
-        // trace!("HydrabadgerHandler::handle_internal_message: 'state' unlocked for writing.");
+        // trace!("Handler::handle_internal_message: 'state' unlocked for writing.");
         Ok(())
     }
 }
 
-impl Future for HydrabadgerHandler {
+impl Future for Handler {
     type Item = ();
     type Error = Error;
 
@@ -379,9 +380,9 @@ impl Future for HydrabadgerHandler {
         // Ensure the loop can't hog the thread for too long:
         const MESSAGES_PER_TICK: usize = 50;
 
-        trace!("HydrabadgerHandler::poll: Locking 'state' for writing...");
+        trace!("Handler::poll: Locking 'state' for writing...");
         let mut state = self.hdb.state_mut();
-        trace!("HydrabadgerHandler::poll: 'state' locked for writing.");
+        trace!("Handler::poll: 'state' locked for writing.");
 
          // Handle incoming internal messages:
         for i in 0..MESSAGES_PER_TICK {
@@ -396,7 +397,7 @@ impl Future for HydrabadgerHandler {
                 },
                 Ok(Async::Ready(None)) => {
                     // The sending ends have all dropped.
-                    info!("Shutting down HydrabadgerHandler...");
+                    info!("Shutting down Handler...");
                     return Ok(Async::Ready(()));
                 },
                 Ok(Async::NotReady) => {},
@@ -450,7 +451,7 @@ impl Future for HydrabadgerHandler {
         }
 
         drop(state);
-        trace!("HydrabadgerHandler::poll: 'state' unlocked for writing.");
+        trace!("Handler::poll: 'state' unlocked for writing.");
 
         Ok(Async::NotReady)
     }

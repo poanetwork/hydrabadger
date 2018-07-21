@@ -11,8 +11,8 @@ use hbbft::{
 
 };
 use peer::Peers;
-use super::{Uid, NetworkState, Transaction, Step, Input, InputOrMessage,
-    NetworkNodeInfo, Message};
+use ::{Uid, NetworkState, NetworkNodeInfo, Message, Transaction, Step, Input};
+use super::{InputOrMessage};
 use super::{BATCH_SIZE, HB_PEER_MINIMUM_COUNT};
 
 
