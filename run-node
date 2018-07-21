@@ -1,3 +1,5 @@
+# TODO: Add toggles for debug logging & release mode
+
 #/bin/bash
 let HOST_PORT=300$1
 let PEER_0_PORT=$HOST_PORT-1
@@ -5,9 +7,14 @@ let PEER_1_PORT=$HOST_PORT+1
 # HOST_ADDR="localhost:$HOST_PORT"
 HYDRABADGER_LOG=peer_node::hydrabadger=error,info
 bash -c "\
-HYDRABADGER_LOG=$HYDRABADGER_LOG cargo run --bin peer_node --release -- \
+HYDRABADGER_LOG=$HYDRABADGER_LOG cargo run --bin peer_node \
+    --release \
+    -- \
     -b localhost:$HOST_PORT \
     -r localhost:$PEER_0_PORT \
     -r localhost:$PEER_1_PORT\
     $2 $3 $4 $5 $6 $7 $8
 "
+
+
+# --release

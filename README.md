@@ -25,6 +25,9 @@ process them accordingly, and output complete batches.
 Type `cargo run [--release] -- --help` (or `target/peer_node --help` if
 already built) for command line options (more coming soon!).
 
+*TODO: Add details about expected output*
+*TODO: Add option to run in non-release mode to slow down output*
+
 
 ### Current State
 

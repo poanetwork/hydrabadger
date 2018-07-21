@@ -183,16 +183,9 @@ impl Drop for PeerHandler {
         // Remove peer transmitter from the lists:
         self.hdb.peers_mut().remove(&self.out_addr);
 
-        // // FIXME: Consider simply sending the 'change' input through the
-        // // internal channel.
-        // self.hdb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
-        //     .expect("Error adding new peer to HB");
         if let Some(uid) = self.uid.clone() {
             debug!("Sending peer ({}: '{}') disconnect internal message.",
                 self.out_addr, self.uid.clone().unwrap());
-
-            // self.hdb.peer_internal_tx.unbounded_send(InternalMessage::input(
-            //     uid, self.out_addr, Input::Change(Change::Remove(uid)))).unwrap();
 
             self.hdb.send_internal(InternalMessage::peer_disconnect(
                 uid, self.out_addr));
