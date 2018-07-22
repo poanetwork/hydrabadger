@@ -1,22 +1,29 @@
+//! Hydrabadger event handler.
+//!
+//! FIXME: Reorganize `Handler` and `State` to more clearly separate concerns.
+//!     * Do not make state changes directly in this module (use closures, etc.).
+//!
 
+#![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
+    unreachable_code)]
+
+use std::collections::BTreeMap;
 use crossbeam::sync::SegQueue;
 use tokio::{
     self,
     prelude::*,
 };
 use hbbft::{
-    crypto::{
-        PublicKey,
-    },
+    crypto::{PublicKey, PublicKeySet},
     sync_key_gen::{ Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, Target, },
-    queueing_honey_badger::{Input as QhbInput,
-        Change},
+    dynamic_honey_badger::{Message as DhbMessage, JoinPlan},
+    queueing_honey_badger::{Input as QhbInput, Change as QhbChange},
 };
 use peer::Peers;
 use ::{InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
-    OutAddr, InAddr, Uid, NetworkState, InternalRx, Step};
-use super::{Hydrabadger, Error, State, StateDsct,};
+    OutAddr, InAddr, Uid, NetworkState, InternalRx, Step, Input, Message, NetworkNodeInfo};
+use super::{Hydrabadger, Error, State, StateDsct, InputOrMessage};
 use super::{HB_PEER_MINIMUM_COUNT, WIRE_MESSAGE_RETRY_MAX};
 
 
@@ -66,7 +73,7 @@ impl Handler {
     }
 
     fn handle_new_established_peer(&self, src_uid: Uid, _src_addr: OutAddr, src_pk: PublicKey,
-            state: &mut State, peers: &Peers) {
+             request_change_add: bool, state: &mut State, peers: &Peers) {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
                 // panic!("Handler::handle_new_established_peer: \
@@ -76,7 +83,7 @@ impl Handler {
                 state.update_peer_connection_added(&peers);
                 self.hdb.set_state_discriminant(state.discriminant());
             },
-            StateDsct::ConnectedAwaitingMorePeers => {
+            StateDsct::AwaitingMorePeersForKeyGeneration => {
                 if peers.count_validators() >= HB_PEER_MINIMUM_COUNT {
                     info!("== BEGINNING KEY GENERATION ==");
 
@@ -97,25 +104,125 @@ impl Handler {
                     self.wire_to_validators(WireMessage::key_gen_part_ack(ack), peers);
                 }
             },
-            StateDsct::ConnectedGeneratingKeys { .. } => {
+            StateDsct::GeneratingKeys { .. } => {
                 // This *could* be called multiple times when initially
                 // establishing outgoing connections. Do nothing for now.
-                debug!("Handler::handle_new_established_peer: Ignoring new established \
-                    peer signal while `StateDsct::ConnectedGeneratingKeys`.");
+                warn!("Handler::handle_new_established_peer: Ignoring new established \
+                    peer signal while `StateDsct::GeneratingKeys`.");
             },
-            StateDsct::ConnectedObserver | StateDsct::ConnectedValidator => {
-                let qhb = state.qhb_mut().unwrap();
-                info!("Change-Adding ('{}') to honey badger.", src_uid);
-                let step = qhb.input(QhbInput::Change(Change::Add(src_uid, src_pk)))
-                    .expect("Error adding new peer to HB");
-                self.step_queue.push(step);
+            StateDsct::Observer | StateDsct::Validator => {
+                // If the new peer sends a request-change-add (to be a
+                // validator), input the change into HB and broadcast, etc.
+                if request_change_add {
+                    let qhb = state.qhb_mut().unwrap();
+                    info!("Change-Adding ('{}') to honey badger.", src_uid);
+                    let step = qhb.input(QhbInput::Change(QhbChange::Add(src_uid, src_pk)))
+                        .expect("Error adding new peer to HB");
+                    self.step_queue.push(step);
+                }
             },
         }
     }
 
+    // TODO: Create a type for `net_info`.
+    fn instantiate_hb(&self,
+            net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
+            peers: &Peers, state: &mut State) -> Result<(), Error> {
+        let mut iom_queue_opt = None;
+
+        match state.discriminant() {
+            StateDsct::Disconnected => { unimplemented!() },
+            StateDsct::DeterminingNetworkState | StateDsct::GeneratingKeys => {
+                info!("== INSTANTIATING HONEY BADGER ==");
+                match net_info {
+                    Some((nni, pk_set, pk_map)) => {
+                        iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
+                            self.hdb.secret_key().clone(), nni, pk_set, pk_map));
+                    },
+                    None => {
+                        iom_queue_opt = Some(state.set_validator(*self.hdb.uid(),
+                            self.hdb.secret_key().clone(), peers));
+                    }
+                }
+            },
+            StateDsct::AwaitingMorePeersForKeyGeneration => { unimplemented!() },
+            StateDsct::Observer => {
+                // TODO: Add checks to ensure that `net_info` is consistent
+                // with HB's netinfo.
+                debug!("Handler::instantiate_hb: Called when `State::Observer`");
+            },
+            StateDsct::Validator => {
+                // TODO: Add checks to ensure that `net_info` is consistent
+                // with HB's netinfo.
+                debug!("Handler::instantiate_hb: Called when `State::Validator`")
+            },
+        }
+
+        self.hdb.set_state_discriminant(state.discriminant());
+
+        // Handle previously queued input and messages:
+        if let Some(iom_queue) = iom_queue_opt {
+            while let Some(iom) = iom_queue.try_pop() {
+                match iom {
+                    InputOrMessage::Input(input) => {
+                        self.handle_input(input, state)?;
+                    },
+                    InputOrMessage::Message(uid, msg) => {
+                        self.handle_message(msg, &uid, state)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_input(&self, input: Input, state: &mut State) -> Result <(), Error> {
+        match &input {
+            QhbInput::User(_contrib) => {},
+            QhbInput::Change(ref qhb_change) => match qhb_change {
+                QhbChange::Add(uid, pk) => {
+                    if uid == self.hdb.uid() {
+                        assert!(*pk == self.hdb.secret_key().public_key());
+                    }
+                }
+                QhbChange::Remove(_uid) => {},
+            },
+        }
+
+        if let Some(step_res) = state.input(input) {
+            let step = step_res.map_err(|err| {
+                error!("Honey Badger input error: {:?}", err);
+                Error::HbStepError
+            })?;
+            self.step_queue.push(step);
+        }
+        Ok(())
+    }
+
+    fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State) -> Result <(), Error> {
+        trace!("HB_MESSAGE: {:?}", msg);
+        // match &msg {
+        //     // A message belonging to the `HoneyBadger` algorithm started in
+        //     // the given epoch.
+        //     DhbMessage::HoneyBadger(start_epoch, ref msg) => {},
+        //     // A transaction to be committed, signed by a node.
+        //     DhbMessage::KeyGen(epoch, _key_gen_msg, _sig) => {},
+        //     // A vote to be committed, signed by a validator.
+        //     DhbMessage::SignedVote(signed_vote) => {},
+        // }
+        if let Some(step_res) = state.handle_message(src_uid, msg) {
+            let step = step_res.map_err(|err| {
+                error!("Honey Badger handle_message error: {:?}", err);
+                Error::HbStepError
+            })?;
+            self.step_queue.push(step);
+        }
+        Ok(())
+    }
+
     fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
         match state {
-            State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
+            State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
                 // TODO: Move this match block into a function somewhere for re-use:
                 info!("KEY GENERATION: Processing part from {}...", src_uid);
                 let ack = match sync_key_gen.as_mut().unwrap().handle_part(src_uid, part) {
@@ -131,7 +238,7 @@ impl Handler {
                 // Handle our own ack (TODO: Move this for re-use):
                 let fault_log = sync_key_gen.as_mut().unwrap().handle_ack(src_uid, ack.clone());
                 if !fault_log.is_empty() {
-                    error!("Errors acknowledging part:\n {:?}", fault_log);
+                    error!("Errors acknowledging part:\n{:?}", fault_log);
                 }
                 *ack_count += 1;
 
@@ -139,14 +246,16 @@ impl Handler {
                 info!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting...", src_uid);
                 self.wire_to_validators(WireMessage::key_gen_part_ack(ack), &peers);
             }
-            _ => panic!("::handle_key_gen_part: State must be `ConnectedGeneratingKeys`."),
+            s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
+                State: \n{:?}", s.discriminant()),
         }
     }
 
-    fn handle_key_gen_part_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers) {
+    fn handle_key_gen_part_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers)
+            -> Result<(), Error> {
         let mut complete = false;
         match state {
-            State::ConnectedGeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
+            State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
                 let mut sync_key_gen = sync_key_gen.as_mut().unwrap();
                 info!("KEY GENERATION: Processing ack from '{}'...", src_uid);
                 let fault_log = sync_key_gen.handle_ack(src_uid, ack);
@@ -165,20 +274,64 @@ impl Handler {
                     complete = true;
                 }
             },
-            State::ConnectedValidator { .. } | State::ConnectedObserver { .. } => {
-                error!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
+            State::Validator { .. } | State::Observer { .. } => {
+                warn!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
             }
-            _ => panic!("::handle_key_gen_part_ack: State must be `ConnectedGeneratingKeys`."),
+            _ => panic!("::handle_key_gen_part_ack: State must be `GeneratingKeys`."),
         }
 
         if complete {
-            info!("== INITIALIZING HONEY BADGER ==");
-            state.set_connected_validator(*self.hdb.uid(), self.hdb.secret_key().clone(), peers);
-            self.hdb.set_state_discriminant(state.discriminant());
+            self.instantiate_hb(None, peers, state)?;
         }
+        Ok(())
     }
 
-    fn handle_net_state(&self, net_state: NetworkState, state: &mut State, peers: &Peers) {
+    fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
+            -> Result<(), Error> {
+        // let peer_infos;
+        // match net_state {
+        //     NetworkState::Unknown(p_infos) => {
+        //         peer_infos = p_infos;
+        //         state.update_peer_connection_added(peers);
+        //         self.hdb.set_state_discriminant(state.discriminant());
+        //     }
+        //     NetworkState::AwaitingMorePeers(p_infos) => {
+        //         peer_infos = p_infos;
+        //         state.set_awaiting_more_peers();
+        //         self.hdb.set_state_discriminant(state.discriminant());
+        //     },
+        //     NetworkState::GeneratingKeys(p_infos) => {
+        //         peer_infos = p_infos;
+        //         // state.set_observer();
+        //     },
+        //     NetworkState::Active(net_info) => {
+        //         peer_infos = net_info.0.clone();
+        //         self.instantiate_hb(Some(net_info), peers, state)?;
+        //     },
+        //     NetworkState::None => panic!("`NetworkState::None` received."),
+        // }
+
+        // // Connect to all newly discovered peers.
+        // for peer_info in peer_infos.iter() {
+        //     // Only connect with peers which are not already
+        //     // connected (and are not us).
+        //     if peer_info.in_addr != *self.hdb.addr() &&
+        //             !peers.contains_in_addr(&peer_info.in_addr) {
+        //         let local_pk = self.hdb.secret_key().public_key();
+        //         tokio::spawn(self.hdb.clone().connect_outgoing(
+        //             peer_info.in_addr.0,
+        //             local_pk,
+        //             Some((peer_info.uid, peer_info.in_addr, peer_info.pk)),
+        //             false,
+        //         ));
+        //     }
+        // }
+
+        Ok(())
+    }
+
+    fn handle_net_state(&self, net_state: NetworkState, state: &mut State, peers: &Peers)
+            -> Result<(), Error> {
         let peer_infos;
         match net_state {
             NetworkState::Unknown(p_infos) => {
@@ -188,16 +341,16 @@ impl Handler {
             }
             NetworkState::AwaitingMorePeers(p_infos) => {
                 peer_infos = p_infos;
-                state.set_connected_awaiting_more_peers();
+                state.set_awaiting_more_peers();
                 self.hdb.set_state_discriminant(state.discriminant());
             },
             NetworkState::GeneratingKeys(p_infos) => {
                 peer_infos = p_infos;
-                // state.set_connected_observer();
+                // state.set_observer();
             },
-            NetworkState::Active(p_infos) => {
-                peer_infos = p_infos;
-                // state.set_connected_observer();
+            NetworkState::Active(net_info) => {
+                peer_infos = net_info.0.clone();
+                // self.instantiate_hb(Some(net_info), peers, state)?;
             },
             NetworkState::None => panic!("`NetworkState::None` received."),
         }
@@ -210,10 +363,14 @@ impl Handler {
                     !peers.contains_in_addr(&peer_info.in_addr) {
                 let local_pk = self.hdb.secret_key().public_key();
                 tokio::spawn(self.hdb.clone().connect_outgoing(
-                    peer_info.in_addr.0, local_pk,
-                    Some((peer_info.uid, peer_info.in_addr, peer_info.pk))));
+                    peer_info.in_addr.0,
+                    local_pk,
+                    Some((peer_info.uid, peer_info.in_addr, peer_info.pk)),
+                    false,
+                ));
             }
         }
+        Ok(())
     }
 
     fn handle_peer_disconnect(&self, src_uid: Uid, state: &mut State, peers: &Peers)
@@ -237,19 +394,19 @@ impl Handler {
             State::DeterminingNetworkState { .. } => {
                 // unimplemented!();
             },
-            State::ConnectedAwaitingMorePeers { .. } => {
+            State::AwaitingMorePeersForKeyGeneration { .. } => {
                 // info!("Removing peer ({}: '{}') from await list.",
                 //     src_out_addr, src_uid.clone().unwrap());
                 // state.peer_connection_dropped(&*self.hdb.peers());
             },
-            State::ConnectedGeneratingKeys { .. } => {
+            State::GeneratingKeys { .. } => {
                 // Do something here (possibly panic).
             },
-            State::ConnectedObserver { .. } => {
+            State::Observer { .. } => {
                 // Do nothing?
             }
-            State::ConnectedValidator { ref mut qhb } => {
-                let step = qhb.as_mut().unwrap().input(QhbInput::Change(Change::Remove(src_uid)))?;
+            State::Validator { ref mut qhb } => {
+                let step = qhb.as_mut().unwrap().input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
                 self.step_queue.push(step);
             },
         }
@@ -260,21 +417,17 @@ impl Handler {
             -> Result<(), Error> {
         let (src_uid, src_out_addr, w_msg) = i_msg.into_parts();
 
-        // trace!("Handler::handle_internal_message: Locking 'state' for writing...");
-        // let mut state = self.hdb.state_mut();
-        // trace!("Handler::handle_internal_message: 'state' locked for writing.");
-
         match w_msg {
             // New incoming connection:
-            InternalMessageKind::NewIncomingConnection(_src_in_addr, src_pk) => {
+            InternalMessageKind::NewIncomingConnection(_src_in_addr, src_pk, request_change_add) => {
                 let peers = self.hdb.peers();
 
                 // if let StateDsct::Disconnected = state.discriminant() {
-                //     state.set_connected_awaiting_more_peers();
+                //     state.set_awaiting_more_peers();
                 // }
                 match state.discriminant() {
                     StateDsct::Disconnected | StateDsct::DeterminingNetworkState  => {
-                        state.set_connected_awaiting_more_peers();
+                        state.set_awaiting_more_peers();
                         self.hdb.set_state_discriminant(state.discriminant());
                         // state.peer_connection_added(&peers);
                     },
@@ -292,7 +445,8 @@ impl Handler {
                 ).unwrap();
 
                 // Modify state accordingly:
-                self.handle_new_established_peer(src_uid.unwrap(), src_out_addr, src_pk, state, &peers);
+                self.handle_new_established_peer(src_uid.unwrap(), src_out_addr, src_pk,
+                     request_change_add, state, &peers);
             },
             // New outgoing connection (initial):
             InternalMessageKind::NewOutgoingConnection => {
@@ -305,27 +459,12 @@ impl Handler {
                 state.update_peer_connection_added(&peers);
                 self.hdb.set_state_discriminant(state.discriminant());
             },
-            InternalMessageKind::HbMessage(msg) => {
-                // info!("Handling incoming message: {:?}", msg);
-                // qhb.handle_message(&src_uid, msg).unwrap();
-                if let Some(step_res) = state.handle_message(
-                        src_uid.as_ref().unwrap(), msg) {
-                    let step = step_res.map_err(|err| {
-                        error!("Honey Badger handle_message error: {:?}", err);
-                        Error::HbStepError
-                    })?;
-                    self.step_queue.push(step);
-                }
-            },
             InternalMessageKind::HbInput(input) => {
-                if let Some(step_res) = state.input(input) {
-                    let step = step_res.map_err(|err| {
-                        error!("Honey Badger input error: {:?}", err);
-                        Error::HbStepError
-                    })?;
-                    self.step_queue.push(step);
-                }
-            }
+                self.handle_input(input, state)?;
+            },
+            InternalMessageKind::HbMessage(msg) => {
+                self.handle_message(msg, src_uid.as_ref().unwrap(), state)?;
+            },
             InternalMessageKind::PeerDisconnect => {
                 let dropped_src_uid = src_uid.clone().unwrap();
                 info!("Peer disconnected: ({}: '{}').", src_out_addr, dropped_src_uid);
@@ -333,6 +472,7 @@ impl Handler {
                 self.handle_peer_disconnect(dropped_src_uid, state, &peers)?;
             },
             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
+
                 // This is sent on the wire to ensure that we have all of the
                 // relevant details for a peer (generally preceeding other
                 // messages which may arrive before `Welcome...`.
@@ -340,13 +480,14 @@ impl Handler {
                     debug!("Received hello from {}", src_uid_new);
                     let mut peers = self.hdb.peers_mut();
                     match peers.establish_validator(src_out_addr, (src_uid_new, src_in_addr, src_pk)) {
-                        true => assert!(src_uid_new == src_uid.clone().unwrap()),
-                        false => assert!(src_uid.is_none()),
+                        true => debug_assert!(src_uid_new == src_uid.clone().unwrap()),
+                        false => debug_assert!(src_uid.is_none()),
                     }
 
                     // Modify state accordingly:
-                    self.handle_net_state(net_state, state, &peers);
+                    self.handle_net_state(net_state, state, &peers)?;
                 }
+
                 // New outgoing connection:
                 WireMessageKind::WelcomeReceivedChangeAdd(src_uid_new, src_pk, net_state) => {
                     debug!("Received NetworkState: \n{:?}", net_state);
@@ -358,23 +499,31 @@ impl Handler {
                         (src_uid_new, InAddr(src_out_addr.0), src_pk));
 
                     // Modify state accordingly:
-                    self.handle_net_state(net_state, state, &peers);
+                    self.handle_net_state(net_state, state, &peers)?;
 
                     // Modify state accordingly:
-                    self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk, state, &peers);
+                    self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk,
+                        false, state, &peers);
                 },
                 WireMessageKind::KeyGenPart(part) => {
                     self.handle_key_gen_part(&src_uid.unwrap(), part, state);
                 },
                 WireMessageKind::KeyGenPartAck(ack) => {
                     let peers = self.hdb.peers();
-                    self.handle_key_gen_part_ack(&src_uid.unwrap(), ack, state, &peers);
+                    self.handle_key_gen_part_ack(&src_uid.unwrap(), ack, state, &peers)?;
                 },
-                _ => {},
+
+                // Output by validators when a batch with a `ChangeState`
+                // other than `None` is output. Idempotent.
+                WireMessageKind::JoinPlan(jp) => {
+                    let peers = self.hdb.peers();
+                    self.handle_join_plan(jp, state, &peers)?;
+                },
+
+                wm @ _ => warn!("Handler::handle_internal_message: Unhandled wire message: \
+                    \n{:?}", wm,),
             },
         }
-
-        // trace!("Handler::handle_internal_message: 'state' unlocked for writing.");
         Ok(())
     }
 }
@@ -442,14 +591,16 @@ impl Future for Handler {
             }
         }
 
-        drop(peers);
-
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
             if step.output.len() > 0 {
                 info!("NEW STEP OUTPUT:",);
-                for output in step.output.drain(..) {
-                    info!("    BATCH: \n{:?}", output);
+                for batch in step.output.drain(..) {
+                    info!("    BATCH: \n{:?}", batch);
+                    if let Some(jp) = batch.join_plan() {
+                        debug!("Outputting join plan: {:?}", jp);
+                        self.wire_to_all(WireMessage::join_plan(jp), &peers);
+                    }
                     // TODO: Something useful!
                 }
                 if !step.fault_log.is_empty() {
@@ -458,6 +609,7 @@ impl Future for Handler {
             }
         }
 
+        drop(peers);
         drop(state);
         trace!("Handler::poll: 'state' unlocked for writing.");
 

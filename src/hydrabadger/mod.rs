@@ -5,16 +5,20 @@ mod hydrabadger;
 use std;
 use bincode;
 use hbbft::queueing_honey_badger::{Error as QhbError};
-use ::{Message, Input};
+use ::{Message, Input, Uid};
 use self::state::{State, StateDsct};
 use self::handler::{Handler};
 
 pub use self::hydrabadger::Hydrabadger;
 
-const BATCH_SIZE: usize = 100;
-const TXN_BYTES: usize = 100;
+// If `true`, adds a delay to
+#[allow(dead_code)]
+const EXTRA_DELAY_MS: u64 = 0;
+
+const BATCH_SIZE: usize = 50;
+const TXN_BYTES: usize = 4;
 const NEW_TXN_INTERVAL_MS: u64 = 5000;
-const NEW_TXNS_PER_INTERVAL: usize = 20;
+const NEW_TXNS_PER_INTERVAL: usize = 10;
 
 // The minimum number of peers needed to spawn a HB instance.
 const HB_PEER_MINIMUM_COUNT: usize = 4;
@@ -27,7 +31,7 @@ const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 #[derive(Clone, Debug)]
 pub(crate) enum InputOrMessage {
     Input(Input),
-    Message(Message),
+    Message(Uid, Message),
 }
 
 

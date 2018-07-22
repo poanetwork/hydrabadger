@@ -1,9 +1,17 @@
+//! Hydrabadger state.
+//!
+//! FIXME: Reorganize `Handler` and `State` to more clearly separate concerns.
+//!
+
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::{
+    fmt,
+    collections::BTreeMap,
+};
 use crossbeam::sync::SegQueue;
 use hbbft::{
-    crypto::{PublicKey, SecretKey},
+    crypto::{PublicKey, SecretKey, PublicKeySet},
     sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, NetworkInfo},
     queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger},
@@ -21,10 +29,16 @@ use super::{BATCH_SIZE, HB_PEER_MINIMUM_COUNT};
 pub enum StateDsct {
     Disconnected,
     DeterminingNetworkState,
-    ConnectedAwaitingMorePeers,
-    ConnectedGeneratingKeys,
-    ConnectedObserver,
-    ConnectedValidator,
+    AwaitingMorePeersForKeyGeneration,
+    GeneratingKeys,
+    Observer,
+    Validator,
+}
+
+impl fmt::Display for StateDsct {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl From<StateDsct> for usize {
@@ -32,10 +46,10 @@ impl From<StateDsct> for usize {
         match dsct {
             StateDsct::Disconnected => 0,
             StateDsct::DeterminingNetworkState => 1,
-            StateDsct::ConnectedAwaitingMorePeers => 2,
-            StateDsct::ConnectedGeneratingKeys => 3,
-            StateDsct::ConnectedObserver => 4,
-            StateDsct::ConnectedValidator => 5,
+            StateDsct::AwaitingMorePeersForKeyGeneration => 2,
+            StateDsct::GeneratingKeys => 3,
+            StateDsct::Observer => 4,
+            StateDsct::Validator => 5,
         }
     }
 }
@@ -45,10 +59,10 @@ impl From<usize> for StateDsct {
         match val {
             0 => StateDsct::Disconnected,
             1 => StateDsct::DeterminingNetworkState,
-            2 => StateDsct::ConnectedAwaitingMorePeers,
-            3 => StateDsct::ConnectedGeneratingKeys,
-            4 => StateDsct::ConnectedObserver,
-            5 => StateDsct::ConnectedValidator,
+            2 => StateDsct::AwaitingMorePeersForKeyGeneration,
+            3 => StateDsct::GeneratingKeys,
+            4 => StateDsct::Observer,
+            5 => StateDsct::Validator,
             _ => panic!("Invalid state discriminant."),
         }
     }
@@ -58,24 +72,26 @@ impl From<usize> for StateDsct {
 // The current hydrabadger state.
 pub(crate) enum State {
     Disconnected { },
-    DeterminingNetworkState { },
-    ConnectedAwaitingMorePeers {
+    DeterminingNetworkState {
+        iom_queue: Option<SegQueue<InputOrMessage>>,
+    },
+    AwaitingMorePeersForKeyGeneration {
         // Queued input to HoneyBadger:
         // FIXME: ACTUALLY USE THIS QUEUED INPUT!
         iom_queue: Option<SegQueue<InputOrMessage>>,
     },
-    ConnectedGeneratingKeys {
+    GeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
         ack_count: usize,
         // Queued input to HoneyBadger:
         // FIXME: ACTUALLY USE THIS QUEUED INPUT!
-        iom_queue: SegQueue<InputOrMessage>,
+        iom_queue: Option<SegQueue<InputOrMessage>>,
     },
-    ConnectedObserver {
+    Observer {
         qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
     },
-    ConnectedValidator {
+    Validator {
         qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
     },
 }
@@ -86,15 +102,17 @@ impl State {
         match self {
             State::Disconnected { .. } => StateDsct::Disconnected,
             State::DeterminingNetworkState { .. } => StateDsct::DeterminingNetworkState,
-            State::ConnectedAwaitingMorePeers { .. } => StateDsct::ConnectedAwaitingMorePeers,
-            State::ConnectedGeneratingKeys{ .. } => StateDsct::ConnectedGeneratingKeys,
-            State::ConnectedObserver { .. } => StateDsct::ConnectedObserver,
-            State::ConnectedValidator { .. } => StateDsct::ConnectedValidator,
+            State::AwaitingMorePeersForKeyGeneration { .. } =>
+                StateDsct::AwaitingMorePeersForKeyGeneration,
+            State::GeneratingKeys{ .. } => StateDsct::GeneratingKeys,
+            State::Observer { .. } => StateDsct::Observer,
+            State::Validator { .. } => StateDsct::Validator,
         }
     }
 
     /// Returns a new `State::Disconnected`.
-    pub(super) fn disconnected(/*local_uid: Uid, local_addr: InAddr,*/ /*secret_key: SecretKey*/) -> State {
+    pub(super) fn disconnected(/*local_uid: Uid, local_addr: InAddr,*/ /*secret_key: SecretKey*/)
+            -> State {
         State::Disconnected { /*secret_key: secret_key*/ }
     }
 
@@ -102,7 +120,7 @@ impl State {
     // //
     // // TODO: Add proper error handling:
     // fn set_determining_network_state(&mut self) {
-    //     *self = match *self {
+    //     *self = match self {
     //         State::Disconnected { } => {
     //             info!("Setting state: `DeterminingNetworkState`.");
     //             State::DeterminingNetworkState { }
@@ -111,27 +129,31 @@ impl State {
     //     };
     // }
 
-    /// Sets the state to `ConnectedAwaitingMorePeers`.
-    pub(super) fn set_connected_awaiting_more_peers(&mut self) {
-        *self = match *self {
-            State::Disconnected { }
-                    | State::DeterminingNetworkState { } => {
-                info!("Setting state: `ConnectedAwaitingMorePeers`.");
-                State::ConnectedAwaitingMorePeers { iom_queue: Some(SegQueue::new()) }
+    /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
+    pub(super) fn set_awaiting_more_peers(&mut self) {
+        *self = match self {
+            State::Disconnected { } => {
+                info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                State::AwaitingMorePeersForKeyGeneration { iom_queue: Some(SegQueue::new()) }
             },
+            State::DeterminingNetworkState { ref mut iom_queue } => {
+                info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                State::AwaitingMorePeersForKeyGeneration { iom_queue: iom_queue.take() }
+            }
             _ => {
-                debug!("Attempted to set `State::ConnectedAwaitingMorePeers` while connected.");
+                debug!("Attempted to set `State::AwaitingMorePeersForKeyGeneration` \
+                    while connected.");
                 return
             }
         };
     }
 
-    /// Sets the state to `ConnectedAwaitingMorePeers`.
+    /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers)
             -> (Part, Ack) {
         let (part, ack);
-        *self = match *self {
-            State::ConnectedAwaitingMorePeers { ref mut iom_queue } => {
+        *self = match self {
+            State::AwaitingMorePeersForKeyGeneration { ref mut iom_queue } => {
                 // let secret_key = secret_key.clone();
                 let threshold = HB_PEER_MINIMUM_COUNT / 3;
 
@@ -160,41 +182,80 @@ impl State {
                     error!("Errors acknowledging part (from self):\n {:?}", fault_log);
                 }
 
-                State::ConnectedGeneratingKeys { sync_key_gen: Some(sync_key_gen),
-                    public_key: Some(pk), ack_count: 1, iom_queue: iom_queue.take().unwrap() }
+                State::GeneratingKeys { sync_key_gen: Some(sync_key_gen),
+                    public_key: Some(pk), ack_count: 1, iom_queue: iom_queue.take() }
             },
             _ => panic!("State::set_generating_keys: \
-                Must be State::ConnectedAwaitingMorePeers"),
+                Must be State::AwaitingMorePeersForKeyGeneration"),
         };
 
         (part, ack)
     }
 
 
-    /// Changes the variant (in-place) of this `State` to `ConnectedObserver`.
+    // /// Changes the variant (in-place) of this `State` to `Observer`.
+    // //
+    // // TODO: Add proper error handling:
+    // pub(super) fn set_observer(&mut self) {
+    //     *self = match self {
+    //         State::DeterminingNetworkState { .. } => {
+    //             State::Observer { qhb: None }
+    //         },
+    //         _ => panic!("Must be `State::DeterminingNetworkState` before becoming \
+    //             `State::Observer`."),
+    //     };
+    //     // unimplemented!()
+    // }
+
+    /// Changes the variant (in-place) of this `State` to `Observer`.
     //
     // TODO: Add proper error handling:
-    pub(super) fn set_connected_observer(&mut self) {
-        *self = match *self {
-            State::DeterminingNetworkState { .. } => {
-                State::ConnectedObserver { qhb: None }
+    #[must_use]
+    pub(super) fn set_observer(&mut self, local_uid: Uid, local_sk: SecretKey,
+            _net_node_info: Vec<NetworkNodeInfo>, pk_set: PublicKeySet,
+            pk_map: BTreeMap<Uid, PublicKey>)
+            -> SegQueue<InputOrMessage> {
+        let iom_queue_ret;
+        *self = match self {
+            State::DeterminingNetworkState { ref mut iom_queue } => {
+                let sk_share = local_sk.clone().into();
+
+                let netinfo = NetworkInfo::new(
+                    local_uid,
+                    sk_share,
+                    pk_set,
+                    local_sk,
+                    pk_map,
+                );
+
+                let dhb = DynamicHoneyBadger::builder(netinfo)
+                    .build()
+                    .expect("Error instantiating DynamicHoneyBadger");
+                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(BATCH_SIZE).build();
+
+                info!("== HONEY BADGER INITIALIZED ==");
+                iom_queue_ret = iom_queue.take().unwrap();
+                State::Observer { qhb: Some(qhb) }
             },
-            _ => panic!("Must be `State::DeterminingNetworkState` before becoming \
-                `State::ConnectedObserver`."),
+            s @ _ => panic!("State::set_observer: State must be `GeneratingKeys`. \
+                State: {}", s.discriminant()),
         };
-        // unimplemented!()
+        iom_queue_ret
     }
 
-    /// Changes the variant (in-place) of this `State` to `ConnectedObserver`.
+    /// Changes the variant (in-place) of this `State` to `Observer`.
     //
     // TODO: Add proper error handling:
-    pub(super) fn set_connected_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers) {
-        *self = match *self {
-            State::ConnectedGeneratingKeys { ref mut sync_key_gen, mut public_key, .. } => {
+    #[must_use]
+    pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers)
+            -> SegQueue<InputOrMessage> {
+        let iom_queue_ret;
+        *self = match self {
+            State::GeneratingKeys { ref mut sync_key_gen, mut public_key,
+                    ref mut iom_queue, .. } => {
                 let mut sync_key_gen = sync_key_gen.take().unwrap();
-                let _pk = public_key.take().unwrap();
+                assert_eq!(public_key.take().unwrap(), local_sk.public_key());
 
-                // generate(&self) -> (PublicKeySet, Option<SecretKeyShare>)
                 let (pk_set, sk_share_opt) = sync_key_gen.generate();
                 let sk_share = sk_share_opt.unwrap();
 
@@ -219,22 +280,23 @@ impl State {
                 let qhb = QueueingHoneyBadger::builder(dhb).batch_size(BATCH_SIZE).build();
 
                 info!("== HONEY BADGER INITIALIZED ==");
-
-                State::ConnectedValidator { qhb: Some(qhb) }
+                iom_queue_ret = iom_queue.take().unwrap();
+                State::Validator { qhb: Some(qhb) }
             }
-            _ => panic!("State::set_connected_validator: \
-                State must be `ConnectedGeneratingKeys`."),
+            s @ _ => panic!("State::set_validator: State must be `GeneratingKeys`. \
+                State: {}", s.discriminant()),
         };
+        iom_queue_ret
     }
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does
     /// nothing.
     pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers) {
         let _dsct = self.discriminant();
-        *self = match *self {
+        *self = match self {
             State::Disconnected { } => {
                 info!("Setting state: `DeterminingNetworkState`.");
-                State::DeterminingNetworkState { }
+                State::DeterminingNetworkState { iom_queue: Some(SegQueue::new()) }
             },
             _ => return,
         };
@@ -242,7 +304,7 @@ impl State {
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
     pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers) {
-        *self = match *self {
+        *self = match self {
             State::DeterminingNetworkState { .. } => {
                 if peers.count_total() == 0 {
                     State::Disconnected { }
@@ -255,19 +317,20 @@ impl State {
                 assert_eq!(peers.count_total(), 0);
                 return;
             },
-            State::ConnectedAwaitingMorePeers { .. } => {
-                debug!("Ignoring peer disconnection when `State::ConnectedAwaitingMorePeers`.");
+            State::AwaitingMorePeersForKeyGeneration { .. } => {
+                debug!("Ignoring peer disconnection when \
+                    `State::AwaitingMorePeersForKeyGeneration`.");
                 return;
             },
-            State::ConnectedGeneratingKeys { .. } => {
+            State::GeneratingKeys { .. } => {
                 panic!("FIXME: RESTART KEY GENERATION PROCESS AFTER PEER DISCONNECTS.");
             }
-            State::ConnectedObserver { qhb: _, .. } => {
-                debug!("Ignoring peer disconnection when `State::ConnectedObserver`.");
+            State::Observer { qhb: _, .. } => {
+                debug!("Ignoring peer disconnection when `State::Observer`.");
                 return;
             },
-            State::ConnectedValidator { qhb: _, .. } => {
-                debug!("Ignoring peer disconnection when `State::ConnectedValidator`.");
+            State::Validator { qhb: _, .. } => {
+                debug!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             },
         }
@@ -281,14 +344,17 @@ impl State {
             })
         }).collect::<Vec<_>>();
         match self {
-            State::ConnectedAwaitingMorePeers { .. } => {
+            State::AwaitingMorePeersForKeyGeneration { .. } => {
                 NetworkState::AwaitingMorePeers(peer_infos)
             },
-            State::ConnectedGeneratingKeys{ .. } => {
+            State::GeneratingKeys{ .. } => {
                 NetworkState::GeneratingKeys(peer_infos)
             },
-            State::ConnectedObserver { .. } | State::ConnectedValidator { .. } => {
-                NetworkState::Active(peer_infos)
+            State::Observer { ref qhb } | State::Validator { ref qhb } => {
+                // FIXME: Ensure that `peer_info` matches `NetworkInfo` from HB.
+                let pk_set = qhb.as_ref().unwrap().dyn_hb().netinfo().public_key_set().clone();
+                let pk_map = qhb.as_ref().unwrap().dyn_hb().netinfo().public_key_map().clone();
+                NetworkState::Active((peer_infos, pk_set, pk_map))
             },
             _ => NetworkState::Unknown(peer_infos),
         }
@@ -297,8 +363,8 @@ impl State {
     /// Returns a reference to the internal HB instance.
     pub(super) fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uid>> {
         match self {
-            State::ConnectedObserver { ref qhb, .. } => qhb.as_ref(),
-            State::ConnectedValidator { ref qhb, .. } => qhb.as_ref(),
+            State::Observer { ref qhb, .. } => qhb.as_ref(),
+            State::Validator { ref qhb, .. } => qhb.as_ref(),
             _ => None,
         }
     }
@@ -306,8 +372,8 @@ impl State {
     /// Returns a reference to the internal HB instance.
     pub(super) fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<Transaction>, Uid>> {
         match self {
-            State::ConnectedObserver { ref mut qhb, .. } => qhb.as_mut(),
-            State::ConnectedValidator { ref mut qhb, .. } => qhb.as_mut(),
+            State::Observer { ref mut qhb, .. } => qhb.as_mut(),
+            State::Validator { ref mut qhb, .. } => qhb.as_mut(),
             _ => None,
         }
     }
@@ -317,17 +383,28 @@ impl State {
     /// Cannot be called while disconnected or connection-pending.
     pub(super) fn input(&mut self, input: Input) -> Option<Result<Step, QhbError>> {
         match self {
-            State::ConnectedObserver { ref mut qhb, .. }
-                    | State::ConnectedValidator { ref mut qhb, .. } => {
-                return Some(qhb.as_mut().unwrap().input(input))
+            State::Observer { ref mut qhb, .. } | State::Validator { ref mut qhb, .. } => {
+                trace!("State::input: Inputting: {:?}", input);
+                let step_opt = Some(qhb.as_mut().unwrap().input(input));
+
+                match step_opt {
+                    Some(ref step) => match step {
+                        Ok(s) => trace!("State::input: QHB output: {:?}", s.output),
+                        Err(err) => error!("State::input: QHB output error: {:?}", err),
+                    },
+                    None => trace!("State::input: QHB Output is `None`"),
+                }
+
+                return step_opt;
             },
-            State::ConnectedAwaitingMorePeers { ref iom_queue } => {
+            State::AwaitingMorePeersForKeyGeneration { ref iom_queue }
+                    | State::GeneratingKeys { ref iom_queue, .. }
+                    | State::DeterminingNetworkState { ref iom_queue, .. } => {
+                trace!("State::input: Queueing input: {:?}", input);
                 iom_queue.as_ref().unwrap().push(InputOrMessage::Input(input));
             },
-            State::ConnectedGeneratingKeys { ref iom_queue, .. } => {
-                iom_queue.push(InputOrMessage::Input(input));
-            },
-            _ => panic!("State::input: Must be connected to input to honey badger."),
+            s @ _ => panic!("State::handle_message: Must be connected in order to input to \
+                honey badger. State: {}", s.discriminant()),
         }
         None
     }
@@ -335,19 +412,35 @@ impl State {
     /// Presents a message to HoneyBadger or queues it for later.
     ///
     /// Cannot be called while disconnected or connection-pending.
-    pub(super) fn handle_message(&mut self, src_uid: &Uid, msg: Message) -> Option<Result<Step, QhbError>> {
+    pub(super) fn handle_message(&mut self, src_uid: &Uid, msg: Message)
+            -> Option<Result<Step, QhbError>> {
         match self {
-            State::ConnectedObserver { ref mut qhb, .. }
-                    | State::ConnectedValidator { ref mut qhb, .. } => {
-                return Some(qhb.as_mut().unwrap().handle_message(src_uid, msg))
+            State::Observer { ref mut qhb, .. }
+                    | State::Validator { ref mut qhb, .. } => {
+                trace!("State::handle_message: Handling message: {:?}", msg);
+                let step_opt = Some(qhb.as_mut().unwrap().handle_message(src_uid, msg));
+
+                match step_opt {
+                    Some(ref step) => match step {
+                        Ok(s) => trace!("State::handle_message: QHB output: {:?}", s.output),
+                        Err(err) => error!("State::handle_message: QHB output error: {:?}", err),
+                    },
+                    None => trace!("State::handle_message: QHB Output is `None`"),
+                }
+
+                return step_opt;
             },
-            State::ConnectedAwaitingMorePeers { ref iom_queue } => {
-                iom_queue.as_ref().unwrap().push(InputOrMessage::Message(msg));
+            State::AwaitingMorePeersForKeyGeneration { ref iom_queue }
+                    | State::GeneratingKeys { ref iom_queue, .. }
+                    | State::DeterminingNetworkState { ref iom_queue, .. } => {
+                trace!("State::handle_message: Queueing message: {:?}", msg);
+                iom_queue.as_ref().unwrap().push(InputOrMessage::Message(*src_uid, msg));
             },
-            State::ConnectedGeneratingKeys { ref iom_queue, .. } => {
-                iom_queue.push(InputOrMessage::Message(msg));
-            },
-            _ => panic!("State::input: Must be connected to input to honey badger."),
+            // State::GeneratingKeys { ref iom_queue, .. } => {
+            //     iom_queue.as_ref().unwrap().push(InputOrMessage::Message(msg));
+            // },
+            s @ _ => panic!("State::handle_message: Must be connected in order to input to \
+                honey badger. State: {}", s.discriminant()),
         }
         None
     }

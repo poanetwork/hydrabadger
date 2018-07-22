@@ -16,18 +16,20 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 1. Open a new terminal window.
 2. `cd {...}/hydrabadger`
 3. `./run-node 1`
-
 4. (Repeat 1 and 2), `./run-node 2`, `./run-node 3`, `./run-node 4`
+    * Note: If your terminal has tabs, open multiple tabs and use
+      ctrl-pgup/pgdown to cycle between tabs quickly.
 
 Each peer will generate a number of random transactions at regular intervals,
-process them accordingly, and output complete batches.
+process them accordingly, and output complete batches. If your terminal is
+spammed with batch outputs, consensus is working.
 
 Type `cargo run [--release] -- --help` (or `target/peer_node --help` if
 already built) for command line options (more coming soon!).
 
-*TODO: Add details about expected output*
-*TODO: Add option to run in non-release mode to slow down output*
-
+See the
+[`run-node`](https://github.com/c0gent/hydrabadger/blob/master/run-node)
+script for additional optional environment variables that can be set.
 
 ### Current State
 
@@ -40,13 +42,14 @@ very well yet.
 
 #### Unimplemented
 
-* **Command-Line/Config Options:** Variable and/or random (within a range) batch
-  size, transaction size (bytes), transaction generation count, transaction
-  generation interval, minimum peer count, much more.
+* **Command-Line/Config Options:** Variable and/or random (within a range)
+  batch size, transaction size (bytes), transaction generation count,
+  transaction generation interval, minimum peer count, much more.
 * **Observer Nodes:** still in a state of flux (not working at the time of
   writing).
 * **Additional Nodes:** Only the first 5 nodes are properly handled (as
   validators). Variable and dynamic nodes are coming soon.
+* **Error handling** is atrocious, most errors are simply printed to the log.
 * **Many edge cases and exceptions:** disconnects, reconnects, etc.
   * If too many nodes disconnect, the consensus process halts for all nodes
     (as expected). No means of reconnection or node removal is yet in place.

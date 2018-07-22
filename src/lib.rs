@@ -32,6 +32,7 @@ pub mod blockchain;
 pub mod peer;
 
 use std::{
+    collections::BTreeMap,
     fmt::{self},
     net::{SocketAddr},
     ops::Deref,
@@ -51,9 +52,10 @@ use rand::{Rng, Rand};
 use uuid::Uuid;
 use bincode::{serialize, deserialize};
 use hbbft::{
-    crypto::PublicKey,
+    crypto::{PublicKey, PublicKeySet},
     sync_key_gen::{Part, Ack},
-    dynamic_honey_badger::Message as DhbMessage,
+    // messaging::NetworkInfo,
+    dynamic_honey_badger::{Message as DhbMessage, JoinPlan},
     queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadgerStep},
 };
 
@@ -177,7 +179,7 @@ pub enum NetworkState {
     Unknown(Vec<NetworkNodeInfo>),
     AwaitingMorePeers(Vec<NetworkNodeInfo>),
     GeneratingKeys(Vec<NetworkNodeInfo>),
-    Active(Vec<NetworkNodeInfo>),
+    Active((Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)),
 }
 
 
@@ -195,6 +197,7 @@ pub enum WireMessageKind {
     Message(Message),
     KeyGenPart(Part),
     KeyGenPartAck(Ack),
+    JoinPlan(JoinPlan<Uid>)
     // TargetedMessage(TargetedMessage<Uid>),
 }
 
@@ -222,6 +225,11 @@ impl WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, pk, net_state) }
     }
 
+    /// Returns a `Message` variant.
+    pub fn message(msg: Message) -> WireMessage {
+        WireMessage { kind: WireMessageKind::Message(msg), }
+    }
+
     pub fn key_gen_part(part: Part) -> WireMessage {
         WireMessage { kind: WireMessageKind::KeyGenPart(part) }
     }
@@ -230,9 +238,8 @@ impl WireMessage {
         WireMessageKind::KeyGenPartAck(outcome).into()
     }
 
-    /// Returns a `Message` variant.
-    pub fn message(msg: Message) -> WireMessage {
-        WireMessage { kind: WireMessageKind::Message(msg), }
+    pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage {
+        WireMessageKind::JoinPlan(jp).into()
     }
 
     /// Returns the wire message kind.
@@ -333,7 +340,7 @@ pub enum InternalMessageKind {
     HbMessage(Message),
     HbInput(Input),
     PeerDisconnect,
-    NewIncomingConnection(InAddr, PublicKey),
+    NewIncomingConnection(InAddr, PublicKey, bool),
     NewOutgoingConnection,
 }
 
@@ -373,9 +380,9 @@ impl InternalMessage {
     }
 
     pub fn new_incoming_connection(src_uid: Uid, src_addr: OutAddr, src_in_addr: InAddr,
-            src_pk: PublicKey) -> InternalMessage {
+            src_pk: PublicKey, request_change_add: bool) -> InternalMessage {
         InternalMessage::new(Some(src_uid), src_addr,
-            InternalMessageKind::NewIncomingConnection(src_in_addr, src_pk))
+            InternalMessageKind::NewIncomingConnection(src_in_addr, src_pk, request_change_add))
     }
 
     pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage {
