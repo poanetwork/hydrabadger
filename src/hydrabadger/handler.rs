@@ -24,7 +24,7 @@ use peer::Peers;
 use ::{InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
     OutAddr, InAddr, Uid, NetworkState, InternalRx, Step, Input, Message, NetworkNodeInfo};
 use super::{Hydrabadger, Error, State, StateDsct, InputOrMessage};
-use super::{HB_PEER_MINIMUM_COUNT, WIRE_MESSAGE_RETRY_MAX};
+use super::{HB_PEER_MINIMUM_COUNT, WIRE_MESSAGE_RETRY_MAX, EXTRA_DELAY_MS};
 
 
 
@@ -126,22 +126,27 @@ impl Handler {
 
     // TODO: Create a type for `net_info`.
     fn instantiate_hb(&self,
-            net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
-            peers: &Peers, state: &mut State) -> Result<(), Error> {
+            // net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
+            jp_opt: Option<JoinPlan<Uid>>,
+            state: &mut State, peers: &Peers) -> Result<(), Error> {
         let mut iom_queue_opt = None;
 
         match state.discriminant() {
             StateDsct::Disconnected => { unimplemented!() },
             StateDsct::DeterminingNetworkState | StateDsct::GeneratingKeys => {
                 info!("== INSTANTIATING HONEY BADGER ==");
-                match net_info {
-                    Some((nni, pk_set, pk_map)) => {
+                match jp_opt {
+                    // Some((nni, pk_set, pk_map)) => {
+                    //     iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
+                    //         self.hdb.secret_key().clone(), nni, pk_set, pk_map));
+                    // },
+                    Some(jp) => {
                         iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), nni, pk_set, pk_map));
+                            self.hdb.secret_key().clone(), jp)?);
                     },
                     None => {
                         iom_queue_opt = Some(state.set_validator(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), peers));
+                            self.hdb.secret_key().clone(), peers)?);
                     }
                 }
             },
@@ -149,12 +154,12 @@ impl Handler {
             StateDsct::Observer => {
                 // TODO: Add checks to ensure that `net_info` is consistent
                 // with HB's netinfo.
-                debug!("Handler::instantiate_hb: Called when `State::Observer`");
+                warn!("Handler::instantiate_hb: Called when `State::Observer`");
             },
             StateDsct::Validator => {
                 // TODO: Add checks to ensure that `net_info` is consistent
                 // with HB's netinfo.
-                debug!("Handler::instantiate_hb: Called when `State::Validator`")
+                warn!("Handler::instantiate_hb: Called when `State::Validator`")
             },
         }
 
@@ -284,54 +289,29 @@ impl Handler {
         }
 
         if complete {
-            self.instantiate_hb(None, peers, state)?;
+            self.instantiate_hb(None, state, peers)?;
         }
         Ok(())
     }
 
-    // This may be called spuriously and only need be attended to by
+    // This may be called spuriously and only need be handled by
     // 'unestablished' nodes.
     fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
             -> Result<(), Error> {
         info!("Received join plan: {:?}", jp);
-        // let peer_infos;
-        // match net_state {
-        //     NetworkState::Unknown(p_infos) => {
-        //         peer_infos = p_infos;
-        //         state.update_peer_connection_added(peers);
-        //         self.hdb.set_state_discriminant(state.discriminant());
-        //     }
-        //     NetworkState::AwaitingMorePeers(p_infos) => {
-        //         peer_infos = p_infos;
-        //         state.set_awaiting_more_peers();
-        //         self.hdb.set_state_discriminant(state.discriminant());
-        //     },
-        //     NetworkState::GeneratingKeys(p_infos) => {
-        //         peer_infos = p_infos;
-        //         // state.set_observer();
-        //     },
-        //     NetworkState::Active(net_info) => {
-        //         peer_infos = net_info.0.clone();
-        //         self.instantiate_hb(Some(net_info), peers, state)?;
-        //     },
-        //     NetworkState::None => panic!("`NetworkState::None` received."),
-        // }
 
-        // // Connect to all newly discovered peers.
-        // for peer_info in peer_infos.iter() {
-        //     // Only connect with peers which are not already
-        //     // connected (and are not us).
-        //     if peer_info.in_addr != *self.hdb.addr() &&
-        //             !peers.contains_in_addr(&peer_info.in_addr) {
-        //         let local_pk = self.hdb.secret_key().public_key();
-        //         tokio::spawn(self.hdb.clone().connect_outgoing(
-        //             peer_info.in_addr.0,
-        //             local_pk,
-        //             Some((peer_info.uid, peer_info.in_addr, peer_info.pk)),
-        //             false,
-        //         ));
-        //     }
-        // }
+        match state.discriminant() {
+            StateDsct::Disconnected => unimplemented!("Handler::handle_join_plan: `Disconnected`"),
+            StateDsct::DeterminingNetworkState => {
+                self.instantiate_hb(Some(jp), state, peers)?;
+            },
+            StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
+                panic!("Handler::handle_join_plan: Received join plan while \
+                    `AwaitingMorePeersForKeyGeneration` or `GeneratingKeys`");
+            },
+            StateDsct::Observer | StateDsct::Validator => {}, // Ignore
+            // sd @ _ => unimplemented!("Handler::handle_join_plan: {:?}", sd),
+        }
 
         Ok(())
     }
@@ -455,6 +435,7 @@ impl Handler {
                 self.handle_new_established_peer(src_uid.unwrap(), src_out_addr, src_pk,
                      request_change_add, state, &peers);
             },
+
             // New outgoing connection (initial):
             InternalMessageKind::NewOutgoingConnection => {
                 // This message must be immediately followed by either a
@@ -466,20 +447,23 @@ impl Handler {
                 state.update_peer_connection_added(&peers);
                 self.hdb.set_state_discriminant(state.discriminant());
             },
+
             InternalMessageKind::HbInput(input) => {
                 self.handle_input(input, state)?;
             },
+
             InternalMessageKind::HbMessage(msg) => {
                 self.handle_message(msg, src_uid.as_ref().unwrap(), state)?;
             },
+
             InternalMessageKind::PeerDisconnect => {
                 let dropped_src_uid = src_uid.clone().unwrap();
                 info!("Peer disconnected: ({}: '{}').", src_out_addr, dropped_src_uid);
                 let peers = self.hdb.peers();
                 self.handle_peer_disconnect(dropped_src_uid, state, &peers)?;
             },
-            InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
 
+            InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
                 // This is sent on the wire to ensure that we have all of the
                 // relevant details for a peer (generally preceeding other
                 // messages which may arrive before `Welcome...`.
@@ -512,9 +496,15 @@ impl Handler {
                     self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk,
                         false, state, &peers);
                 },
+
+                // Key gen proposal:
                 WireMessageKind::KeyGenPart(part) => {
                     self.handle_key_gen_part(&src_uid.unwrap(), part, state);
                 },
+
+                // Key gen proposal acknowledgement:
+                //
+                // FIXME: Queue until all parts have been sent.
                 WireMessageKind::KeyGenPartAck(ack) => {
                     let peers = self.hdb.peers();
                     self.handle_key_gen_part_ack(&src_uid.unwrap(), ack, state, &peers)?;
@@ -600,20 +590,26 @@ impl Future for Handler {
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
-            if step.output.len() > 0 {
-                info!("NEW STEP OUTPUT:",);
-                for batch in step.output.drain(..) {
-                    info!("    BATCH: \n{:?}", batch);
-                    if let Some(jp) = batch.join_plan() {
-                        debug!("Outputting join plan: {:?}", jp);
-                        self.wire_to_all(WireMessage::join_plan(jp), &peers);
-                    }
-                    // TODO: Something useful!
+            if step.output.len() > 0 { info!("NEW STEP OUTPUT:"); }
+
+            for batch in step.output.drain(..) {
+                info!("    BATCH: \n{:?}", batch);
+                if let Some(jp) = batch.join_plan() {
+                    debug!("Outputting join plan: {:?}", jp);
+                    self.wire_to_all(WireMessage::join_plan(jp), &peers);
                 }
-                if !step.fault_log.is_empty() {
-                    error!("    FAULT LOG: \n{:?}", step.fault_log);
-                }
+
+                // if EXTRA_DELAY_MS > 0 {
+                //     info!("Delaying thread for {}ms", EXTRA_DELAY_MS);
+                //     ::std::thread::sleep(::std::time::Duration::from_millis(EXTRA_DELAY_MS));
+                // }
+
+                // TODO: Something useful!
             }
+            if !step.fault_log.is_empty() {
+                error!("    FAULT LOG: \n{:?}", step.fault_log);
+            }
+
         }
 
         drop(peers);

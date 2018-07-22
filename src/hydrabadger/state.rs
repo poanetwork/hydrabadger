@@ -11,16 +11,16 @@ use std::{
 };
 use crossbeam::sync::SegQueue;
 use hbbft::{
-    crypto::{PublicKey, SecretKey, PublicKeySet},
+    crypto::{PublicKey, SecretKey, /*PublicKeySet*/},
     sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, NetworkInfo},
     queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger},
-    dynamic_honey_badger::{DynamicHoneyBadger},
+    dynamic_honey_badger::{DynamicHoneyBadger, DynamicHoneyBadgerBuilder, JoinPlan},
 
 };
 use peer::Peers;
 use ::{Uid, NetworkState, NetworkNodeInfo, Message, Transaction, Step, Input};
-use super::{InputOrMessage};
+use super::{InputOrMessage, Error};
 use super::{BATCH_SIZE, HB_PEER_MINIMUM_COUNT};
 
 
@@ -212,25 +212,28 @@ impl State {
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_observer(&mut self, local_uid: Uid, local_sk: SecretKey,
-            _net_node_info: Vec<NetworkNodeInfo>, pk_set: PublicKeySet,
-            pk_map: BTreeMap<Uid, PublicKey>)
-            -> SegQueue<InputOrMessage> {
+            // _net_node_info: Vec<NetworkNodeInfo>, pk_set: PublicKeySet, pk_map: BTreeMap<Uid, PublicKey>
+            jp: JoinPlan<Uid>) -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::DeterminingNetworkState { ref mut iom_queue } => {
-                let sk_share = local_sk.clone().into();
+                // let sk_share = local_sk.clone().into();
 
-                let netinfo = NetworkInfo::new(
-                    local_uid,
-                    sk_share,
-                    pk_set,
-                    local_sk,
-                    pk_map,
-                );
+                // let netinfo = NetworkInfo::new(
+                //     local_uid,
+                //     sk_share,
+                //     pk_set,
+                //     local_sk,
+                //     pk_map,
+                // );
 
-                let dhb = DynamicHoneyBadger::builder(netinfo)
-                    .build()
-                    .expect("Error instantiating DynamicHoneyBadger");
+                // let dhb = DynamicHoneyBadger::builder(netinfo)
+                //     .build()
+                //     .expect("Error instantiating DynamicHoneyBadger");
+
+                let dhb = DynamicHoneyBadgerBuilder::new_joining(local_uid, local_sk, jp)
+                    .build()?;
+
                 let qhb = QueueingHoneyBadger::builder(dhb).batch_size(BATCH_SIZE).build();
 
                 info!("== HONEY BADGER INITIALIZED ==");
@@ -240,7 +243,7 @@ impl State {
             s @ _ => panic!("State::set_observer: State must be `GeneratingKeys`. \
                 State: {}", s.discriminant()),
         };
-        iom_queue_ret
+        Ok(iom_queue_ret)
     }
 
     /// Changes the variant (in-place) of this `State` to `Observer`.
@@ -248,7 +251,7 @@ impl State {
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers)
-            -> SegQueue<InputOrMessage> {
+            -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::GeneratingKeys { ref mut sync_key_gen, mut public_key,
@@ -286,7 +289,7 @@ impl State {
             s @ _ => panic!("State::set_validator: State must be `GeneratingKeys`. \
                 State: {}", s.discriminant()),
         };
-        iom_queue_ret
+        Ok(iom_queue_ret)
     }
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does

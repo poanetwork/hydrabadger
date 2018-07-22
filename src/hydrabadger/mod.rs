@@ -4,7 +4,10 @@ mod hydrabadger;
 
 use std;
 use bincode;
-use hbbft::queueing_honey_badger::{Error as QhbError};
+use hbbft::{
+    dynamic_honey_badger::{Error as DhbError},
+    queueing_honey_badger::{Error as QhbError},
+};
 use ::{Message, Input, Uid};
 use self::state::{State, StateDsct};
 use self::handler::{Handler};
@@ -13,7 +16,7 @@ pub use self::hydrabadger::Hydrabadger;
 
 // If `true`, adds a delay to
 #[allow(dead_code)]
-const EXTRA_DELAY_MS: u64 = 0;
+const EXTRA_DELAY_MS: u64 = 3000;
 
 const BATCH_SIZE: usize = 50;
 const TXN_BYTES: usize = 4;
@@ -48,7 +51,7 @@ pub enum Error {
     QhbPart,
     /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "DynamicHoneyBadger error")]
-    Dhb,
+    Dhb(()),
     /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "QueuingHoneyBadger error [FIXME]")]
     Qhb(()),
@@ -66,6 +69,12 @@ impl From<std::io::Error> for Error {
 impl From<QhbError> for Error {
     fn from(_err: QhbError) -> Error {
         Error::Qhb(())
+    }
+}
+
+impl From<DhbError> for Error {
+    fn from(_err: DhbError) -> Error {
+        Error::Dhb(())
     }
 }
 
