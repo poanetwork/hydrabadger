@@ -285,11 +285,23 @@ impl State {
                 info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
                 State::Validator { qhb: Some(qhb) }
-            }
-            s @ _ => panic!("State::set_validator: State must be `GeneratingKeys`. \
-                State: {}", s.discriminant()),
+            },
+            s @ _ => panic!("State::set_validator: State must be `GeneratingKeys`. State: {}",
+                s.discriminant()),
         };
         Ok(iom_queue_ret)
+    }
+
+    #[must_use]
+    pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
+        *self = match self {
+            State::Observer { ref mut qhb } => {
+                State::Validator { qhb: qhb.take() }
+            },
+            s @ _ => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
+                s.discriminant()),
+        };
+        Ok(())
     }
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does

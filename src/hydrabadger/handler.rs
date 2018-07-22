@@ -17,7 +17,7 @@ use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     sync_key_gen::{ Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, Target, },
-    dynamic_honey_badger::{Message as DhbMessage, JoinPlan},
+    dynamic_honey_badger::{Message as DhbMessage, JoinPlan, Change, ChangeState},
     queueing_honey_badger::{Input as QhbInput, Change as QhbChange},
 };
 use peer::Peers;
@@ -595,14 +595,35 @@ impl Future for Handler {
             for batch in step.output.drain(..) {
                 info!("    BATCH: \n{:?}", batch);
                 if let Some(jp) = batch.join_plan() {
+                    // FIXME: Only sent to unconnected nodes:
                     debug!("Outputting join plan: {:?}", jp);
                     self.wire_to_all(WireMessage::join_plan(jp), &peers);
                 }
 
-                // if EXTRA_DELAY_MS > 0 {
-                //     info!("Delaying thread for {}ms", EXTRA_DELAY_MS);
-                //     ::std::thread::sleep(::std::time::Duration::from_millis(EXTRA_DELAY_MS));
-                // }
+                match batch.change() {
+                    ChangeState::None => {},
+                    ChangeState::InProgress(change) => {
+
+                    },
+                    ChangeState::Complete(change) => match change {
+                        Change::Add(uid, pk) => {
+                            if uid == self.hdb.uid() {
+                                assert_eq!(*pk, self.hdb.secret_key().public_key());
+                                info!("=== PROMOTING NODE TO VALIDATOR ===");
+                                state.promote_to_validator()?;
+
+                            }
+                        },
+                        Change::Remove(uid) => {
+
+                        },
+                    },
+                }
+
+                if EXTRA_DELAY_MS > 0 {
+                    info!("Delaying batch processing thread (task) for {}ms", EXTRA_DELAY_MS);
+                    ::std::thread::sleep(::std::time::Duration::from_millis(EXTRA_DELAY_MS));
+                }
 
                 // TODO: Something useful!
             }

@@ -263,7 +263,7 @@ impl Hydrabadger {
                 drop(peers);
 
                 match dsct {
-                    StateDsct::Validator | StateDsct::Observer => {
+                    StateDsct::Validator => {
                         info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
                         // Send some random transactions to our internal HB instance.
                         let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| {
