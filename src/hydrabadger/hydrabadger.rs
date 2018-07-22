@@ -237,7 +237,7 @@ impl Hydrabadger {
 
     /// Returns a future that generates random transactions and logs status
     /// messages.
-    fn generate_txns(self) -> impl Future<Item = (), Error = ()> {
+    fn generate_txns_status(self) -> impl Future<Item = (), Error = ()> {
         Interval::new(Instant::now(), Duration::from_millis(NEW_TXN_INTERVAL_MS))
             .for_each(move |_| {
                 let hdb = self.clone();
@@ -250,10 +250,10 @@ impl Hydrabadger {
 
                 // Log peer list:
                 let peer_list = peers.peers().map(|p| {
-                    p.in_addr().map(|ia| ia.to_string())
+                    p.in_addr().map(|ia| ia.0.to_string())
                         .unwrap_or(format!("No in address"))
                 }).collect::<Vec<_>>();
-                debug!("    Peers: {:?}", peer_list);
+                info!("    Peers: {:?}", peer_list);
 
                 // Log (trace) full peerhandler details:
                 trace!("PeerHandler list:");
@@ -305,12 +305,12 @@ impl Hydrabadger {
             Ok(())
         });
 
-        let generate_txns = self.clone().generate_txns();
+        let generate_txns_status = self.clone().generate_txns_status();
 
         let hdb_handler = self.handler()
             .map_err(|err| error!("Handler internal error: {:?}", err));
 
-        listen.join4(connect, generate_txns, hdb_handler).map(|(_, _, _, _)| ())
+        listen.join4(connect, generate_txns_status, hdb_handler).map(|(_, _, _, _)| ())
     }
 
     /// Starts a node.

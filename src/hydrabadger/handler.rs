@@ -253,6 +253,9 @@ impl Handler {
 
     fn handle_key_gen_part_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers)
             -> Result<(), Error> {
+
+        // FIXME: Queue acks until all parts are received.
+
         let mut complete = false;
         match state {
             State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
@@ -268,8 +271,8 @@ impl Handler {
                 debug!("   Part acks: {}", ack_count);
 
                 const NODE_N: usize = HB_PEER_MINIMUM_COUNT + 1;
-                if sync_key_gen.count_complete() >= NODE_N &&
-                        *ack_count >= NODE_N * NODE_N {
+                if sync_key_gen.count_complete() >= NODE_N
+                        && *ack_count >= NODE_N * NODE_N {
                     assert!(sync_key_gen.is_ready());
                     complete = true;
                 }
@@ -290,6 +293,7 @@ impl Handler {
     // 'unestablished' nodes.
     fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
             -> Result<(), Error> {
+        info!("Received join plan: {:?}", jp);
         // let peer_infos;
         // match net_state {
         //     NetworkState::Unknown(p_infos) => {
@@ -361,8 +365,9 @@ impl Handler {
         for peer_info in peer_infos.iter() {
             // Only connect with peers which are not already
             // connected (and are not us).
-            if peer_info.in_addr != *self.hdb.addr() &&
-                    !peers.contains_in_addr(&peer_info.in_addr) {
+            if peer_info.in_addr != *self.hdb.addr()
+                    && !peers.contains_in_addr(&peer_info.in_addr)
+                    && peers.get(&OutAddr(peer_info.in_addr.0)).is_none() {
                 let local_pk = self.hdb.secret_key().public_key();
                 tokio::spawn(self.hdb.clone().connect_outgoing(
                     peer_info.in_addr.0,
