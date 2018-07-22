@@ -1,6 +1,6 @@
 //! A peer network node.
 
-// #![allow(unused_imports, dead_code, unused_variables, unused_mut)]
+#![allow(unused_imports, dead_code, unused_variables, unused_mut)]
 
 use std::{
     collections::{
@@ -61,27 +61,6 @@ impl PeerHandler {
             out_addr,
         }
     }
-
-    // /// Sends a message to all connected peers.
-    // fn wire_to_all(&mut self, msg: &WireMessage) {
-    //     // Now, send the message to all other peers
-    //     for (p_addr, peer) in self.hdb.peers().iter() {
-    //         // Don't send the message to ourselves
-    //         if *p_addr != self.out_addr {
-    //             // The send only fails if the rx half has been dropped,
-    //             // however this is impossible as the `tx` half will be
-    //             // removed from the map before the `rx` is dropped.
-    //             peer.tx.unbounded_send(msg.clone()).unwrap();
-    //         }
-    //     }
-    // }
-
-    // /// Sends a hello response (welcome).
-    // pub(crate) fn wire_welcome_received_change_add(&self, net_state: NetworkState) {
-    //     self.hdb.peers().get(&self.out_addr).unwrap()
-    //         .tx.unbounded_send(WireMessage::welcome_received_change_add(self.uid.clone().unwrap(), net_state))
-    //         .unwrap();
-    // }
 
     pub(crate) fn hdb(&self) -> &Hydrabadger {
         &self.hdb
@@ -192,8 +171,17 @@ impl Drop for PeerHandler {
 #[allow(dead_code)]
 enum State {
     Handshaking,
-    Observer,
-    Validator {
+    PendingJoinInfo {
+        uid: Uid,
+        in_addr: InAddr,
+        pk: PublicKey,
+    },
+    EstablishedObserver {
+        uid: Uid,
+        in_addr: InAddr,
+        pk: PublicKey,
+    },
+    EstablishedValidator {
         uid: Uid,
         in_addr: InAddr,
         pk: PublicKey,
@@ -206,9 +194,6 @@ enum State {
 pub struct Peer {
     out_addr: OutAddr,
     tx: WireTx,
-    // uid: Option<Uid>,
-    // in_addr: Option<InAddr>,
-    // pk: Option<PublicKey>,
     state: State,
 }
 
@@ -221,7 +206,7 @@ impl Peer {
         // assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
         let state = match pub_info {
             None => State::Handshaking,
-            Some((uid, in_addr, pk)) => State::Validator { uid, in_addr, pk },
+            Some((uid, in_addr, pk)) => State::EstablishedValidator { uid, in_addr, pk },
         };
 
         Peer {
@@ -231,12 +216,65 @@ impl Peer {
         }
     }
 
-    /// Sets a peer state to `State::Validator` and stores public info.
-    fn establish_validator(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
-        self.state = State::Validator {
-            uid: pub_info.0,
-            in_addr: pub_info.1,
-            pk: pub_info.2
+    /// Sets a peer state to `State::PendingJoinInfo` and stores public info.
+    fn set_pending(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
+        self.state = match self.state {
+            State::Handshaking => {
+                State::PendingJoinInfo {
+                    uid: pub_info.0,
+                    in_addr: pub_info.1,
+                    pk: pub_info.2
+                }
+            },
+            _ => panic!("Peer::set_pending: Can only set pending when \
+                peer state is `Handshaking`."),
+        };
+    }
+
+    /// Sets a peer state to `State::EstablishedObserver` and stores public info.
+    fn establish_observer(&mut self) {
+        self.state = match self.state {
+            State::PendingJoinInfo { uid, in_addr, pk } => {
+                State::EstablishedObserver {
+                    uid,
+                    in_addr,
+                    pk,
+                }
+            },
+            _ => panic!("Peer::establish_observer: Can only establish observer when \
+                peer state is`PendingJoinInfo`."),
+        };
+    }
+
+    /// Sets a peer state to `State::EstablishedValidator` and stores public info.
+    fn establish_validator(&mut self, pub_info: Option<(Uid, InAddr, PublicKey)>) {
+        self.state = match self.state {
+            State::Handshaking => match pub_info {
+                Some(pi) => {
+                    State::EstablishedValidator {
+                        uid: pi.0,
+                        in_addr: pi.1,
+                        pk: pi.2
+                    }
+                },
+                None => {
+                    panic!("Peer::establish_validator: `pub_info` must be supplied \
+                        when establishing a validator from `Handshaking`.");
+                },
+            },
+            State::EstablishedObserver { uid, in_addr, pk } => {
+                if let Some(_) = pub_info {
+                    panic!("Peer::establish_validator: `pub_info` must be `None` \
+                        when upgrading an observer node.");
+                }
+                State::EstablishedValidator {
+                    uid,
+                    in_addr,
+                    pk,
+                }
+            },
+            _ => panic!("Peer::establish_validator: Can only establish validator when \
+                peer state is`Handshaking` or `EstablishedObserver`."),
         };
     }
 
@@ -244,8 +282,9 @@ impl Peer {
     pub fn uid(&self) -> Option<&Uid> {
         match self.state {
             State::Handshaking => None,
-            State::Observer => None,
-            State::Validator { ref uid, .. } => Some(uid),
+            State::PendingJoinInfo { ref uid, .. } => Some(uid),
+            State::EstablishedObserver { ref uid, ..  } => Some(uid),
+            State::EstablishedValidator { ref uid, .. } => Some(uid),
         }
     }
 
@@ -258,8 +297,9 @@ impl Peer {
     pub fn public_key(&self) -> Option<&PublicKey> {
         match self.state {
             State::Handshaking => None,
-            State::Observer => None,
-            State::Validator { ref pk, .. } => Some(pk),
+            State::PendingJoinInfo { ref pk, .. } => Some(pk),
+            State::EstablishedObserver { ref pk, .. } => Some(pk),
+            State::EstablishedValidator { ref pk, .. } => Some(pk),
         }
     }
 
@@ -267,8 +307,9 @@ impl Peer {
     pub fn in_addr(&self) -> Option<&InAddr> {
         match self.state {
             State::Handshaking => None,
-            State::Observer => None,
-            State::Validator { ref in_addr, .. } => Some(in_addr),
+            State::PendingJoinInfo { ref in_addr, .. } => Some(in_addr),
+            State::EstablishedObserver { ref in_addr, .. } => Some(in_addr),
+            State::EstablishedValidator { ref in_addr, .. } => Some(in_addr),
         }
     }
 
@@ -276,15 +317,32 @@ impl Peer {
     pub fn pub_info(&self) -> Option<(&Uid, &InAddr, &PublicKey)> {
         match self.state {
             State::Handshaking => None,
-            State::Observer => None,
-            State::Validator { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+            State::EstablishedObserver { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+            State::PendingJoinInfo { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+            State::EstablishedValidator { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+        }
+    }
+
+    /// Returns true if this peer is pending.
+    pub fn is_pending(&self) -> bool {
+        match self.state {
+            State::PendingJoinInfo { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true if this peer is an established observer.
+    pub fn is_observer(&self) -> bool {
+        match self.state {
+            State::EstablishedObserver { .. } => true,
+            _ => false,
         }
     }
 
     /// Returns true if this peer is an established validator.
     pub fn is_validator(&self) -> bool {
         match self.state {
-            State::Validator { .. } => true,
+            State::EstablishedValidator { .. } => true,
             _ => false,
         }
     }
@@ -321,15 +379,60 @@ impl Peers {
             pub_info: Option<(Uid, InAddr, PublicKey)>,
             ) {
         let peer = Peer::new(out_addr, tx, pub_info);
-        if let State::Validator { uid, .. } = peer.state {
+        if let State::EstablishedValidator { uid, .. } = peer.state {
             self.out_addrs.insert(uid, peer.out_addr);
         }
         self.peers.insert(peer.out_addr, peer);
     }
 
+    /// Attempts to set peer as pending-join-info, storing `pub_info`.
+    ///
+    /// Returns `true` if the peer was already pending.
+    ///
+    /// ### Panics
+    ///
+    /// Peer state must be `Handshaking`.
+    ///
+    /// TODO: Error handling...
+    pub(crate) fn set_pending<O: Borrow<OutAddr>>(&mut self, out_addr: O,
+            pub_info: (Uid, InAddr, PublicKey)) -> bool {
+        let peer = self.peers.get_mut(out_addr.borrow())
+            .expect(&format!("Peers::set_pending: \
+                No peer found with outgoing address: {}", out_addr.borrow()));
+        match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
+            Some(_out_addr_pub) => {
+                let pi_pub = peer.pub_info()
+                    .expect("Peers::set_pending: internal consistency error");
+                assert!(pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2);
+                assert!(peer.is_validator());
+                return true;
+            },
+            None => peer.set_pending(pub_info),
+        }
+        false
+    }
+
+    /// Attempts to establish a peer as an observer.
+    ///
+    /// ### Panics
+    ///
+    /// Peer state must be `Handshaking`.
+    ///
+    /// TODO: Error handling...
+    pub(crate) fn establish_observer<O: Borrow<OutAddr>>(&mut self, out_addr: O) {
+        let peer = self.peers.get_mut(out_addr.borrow())
+            .expect(&format!("Peers::establish_observer: \
+                No peer found with outgoing address: {}", out_addr.borrow()));
+        peer.establish_observer()
+    }
+
     /// Attempts to establish a peer as a validator, storing `pub_info`.
     ///
-    /// Returns `true` if the peer was already established as a validator.
+    /// Returns `true` if the peer was already an established validator.
+    ///
+    /// ### Panics
+    ///
+    /// Peer state must be `Handshaking` or `EstablishedObserver`.
     ///
     /// TODO: Error handling...
     pub(crate) fn establish_validator<O: Borrow<OutAddr>>(&mut self, out_addr: O,
@@ -338,14 +441,14 @@ impl Peers {
             .expect(&format!("Peers::establish_validator: \
                 No peer found with outgoing address: {}", out_addr.borrow()));
         match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
-            Some(_out_addr_pre) => {
-                let pi_pre = peer.pub_info()
+            Some(_out_addr_pub) => {
+                let pi_pub = peer.pub_info()
                     .expect("Peers::establish_validator: internal consistency error");
-                assert!(pub_info.0 == *pi_pre.0 && pub_info.1 == *pi_pre.1 && pub_info.2 == *pi_pre.2);
+                assert!(pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2);
                 assert!(peer.is_validator());
                 return true;
             },
-            None => peer.establish_validator(pub_info),
+            None => peer.establish_validator(Some(pub_info)),
         }
         false
     }

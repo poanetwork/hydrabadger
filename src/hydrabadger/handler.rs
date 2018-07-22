@@ -286,6 +286,8 @@ impl Handler {
         Ok(())
     }
 
+    // This may be called spuriously and only need be attended to by
+    // 'unestablished' nodes.
     fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
             -> Result<(), Error> {
         // let peer_infos;
