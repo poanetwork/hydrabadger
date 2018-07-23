@@ -195,6 +195,7 @@ pub enum WireMessageKind {
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
     Message(Uid, Message),
+    Transactions(Uid, Vec<Transaction>),
     KeyGenPart(Part),
     KeyGenPartAck(Ack),
     JoinPlan(JoinPlan<Uid>)
@@ -223,6 +224,11 @@ impl WireMessage {
     pub fn welcome_received_change_add(src_uid: Uid, pk: PublicKey, net_state: NetworkState)
             -> WireMessage {
         WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) }
+    }
+
+    /// Returns an `Input` variant.
+    pub fn transaction(src_uid: Uid, txns: Vec<Transaction>) -> WireMessage {
+        WireMessage { kind: WireMessageKind::Transactions(src_uid, txns), }
     }
 
     /// Returns a `Message` variant.

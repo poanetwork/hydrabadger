@@ -12,6 +12,7 @@ use std::{
 use futures::sync::mpsc;
 use tokio::prelude::*;
 use hbbft::crypto::PublicKey;
+use hbbft::queueing_honey_badger::{Input as HbInput};
 use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
     OutAddr, InAddr, Uid};
 use hydrabadger::{Hydrabadger, Error,};
@@ -124,17 +125,21 @@ impl Future for PeerHandler {
                         //     .expect("`WireMessageKind::Message` received before \
                         //         establishing peer");
 
-                        // match  {
-                        //     Some() => ,
-                        //     None => {},
-                        // }
-
                         if let Some(peer_uid) = self.uid.as_ref() {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
 
                         self.hdb.send_internal(
                             InternalMessage::hb_message(src_uid, self.out_addr, msg)
+                        )
+                    },
+                    WireMessageKind::Transactions(src_uid, txns) => {
+                        if let Some(peer_uid) = self.uid.as_ref() {
+                            debug_assert_eq!(src_uid, *peer_uid);
+                        }
+
+                        self.hdb.send_internal(
+                            InternalMessage::hb_input(src_uid, self.out_addr, HbInput::User(txns))
                         )
                     },
                     kind @ _ => {
@@ -419,7 +424,9 @@ impl Peers {
             },
             None => peer.set_pending(pub_info),
         }
-        false
+
+        // false
+        panic!("Peer::set_pending: Do not use yet.");
     }
 
     /// Attempts to establish a peer as an observer.
@@ -433,7 +440,9 @@ impl Peers {
         let peer = self.peers.get_mut(out_addr.borrow())
             .expect(&format!("Peers::establish_observer: \
                 No peer found with outgoing address: {}", out_addr.borrow()));
-        peer.establish_observer()
+
+        // peer.establish_observer()
+        panic!("Peer::set_pending: Do not use yet.");
     }
 
     /// Attempts to establish a peer as a validator, storing `pub_info`.

@@ -86,7 +86,11 @@ pub(crate) enum State {
     GeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
+
+        // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED
+
         ack_count: usize,
+
         // Queued input to HoneyBadger:
         // FIXME: ACTUALLY USE THIS QUEUED INPUT!
         iom_queue: Option<SegQueue<InputOrMessage>>,

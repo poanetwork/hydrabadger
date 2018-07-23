@@ -79,7 +79,7 @@ impl Handler {
              request_change_add: bool, state: &mut State, peers: &Peers) {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
-                // panic!("Handler::handle_new_established_peer: \
+                // panic!("hydrabadger::Handler::handle_new_established_peer: \
                 //     Received `WireMessageKind::WelcomeRequestChangeAdd` or \
                 //     `InternalMessageKind::NewIncomingConnection` while \
                 //     `StateDsct::Disconnected` or `DeterminingNetworkState`.");
@@ -104,13 +104,15 @@ impl Handler {
                             local_uid, local_in_addr, local_sk, state.network_state(&peers)),
                         peers);
                     self.wire_to_validators(WireMessage::key_gen_part(part), peers);
+
+                    // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED:
                     self.wire_to_validators(WireMessage::key_gen_part_ack(ack), peers);
                 }
             },
             StateDsct::GeneratingKeys { .. } => {
                 // This *could* be called multiple times when initially
                 // establishing outgoing connections. Do nothing for now.
-                warn!("Handler::handle_new_established_peer: Ignoring new established \
+                warn!("hydrabadger::Handler::handle_new_established_peer: Ignoring new established \
                     peer signal while `StateDsct::GeneratingKeys`.");
             },
             StateDsct::Observer | StateDsct::Validator => {
@@ -127,33 +129,33 @@ impl Handler {
         }
     }
 
-    fn handle_input(&self, input: Input, state: &mut State) -> Result <(), Error> {
-        match &input {
-            QhbInput::User(_contrib) => {},
-            QhbInput::Change(ref qhb_change) => match qhb_change {
-                QhbChange::Add(uid, pk) => {
-                    if uid == self.hdb.uid() {
-                        debug_assert!(*pk == self.hdb.secret_key().public_key());
-                    }
-                }
-                QhbChange::Remove(_uid) => {},
-            },
-        }
+    fn handle_input(&self, input: Input, state: &mut State) -> Result<(), Error> {
+        // match &input {
+        //     QhbInput::User(_contrib) => {},
+        //     QhbInput::Change(ref qhb_change) => match qhb_change {
+        //         QhbChange::Add(uid, pk) => {
+        //             if uid == self.hdb.uid() {
+        //                 debug_assert!(*pk == self.hdb.secret_key().public_key());
+        //             }
+        //         }
+        //         QhbChange::Remove(_uid) => {},
+        //     },
+        // }
 
-        debug!("####### About to input....");
+        trace!("hydrabadger::Handler: About to input....");
         if let Some(step_res) = state.input(input) {
             let step = step_res.map_err(|err| {
                 error!("Honey Badger input error: {:?}", err);
                 Error::HbStepError
             })?;
-            debug!("####### Input step result added to queue....");
+            trace!("hydrabadger::Handler: Input step result added to queue....");
             self.step_queue.push(step);
         }
         Ok(())
     }
 
     fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State) -> Result <(), Error> {
-        trace!("HB_MESSAGE: {:?}", msg);
+        trace!("hydrabadger::Handler: HB_MESSAGE: {:?}", msg);
         // match &msg {
         //     // A message belonging to the `HoneyBadger` algorithm started in
         //     // the given epoch.
@@ -163,13 +165,13 @@ impl Handler {
         //     // A vote to be committed, signed by a validator.
         //     DhbMessage::SignedVote(signed_vote) => {},
         // }
-        debug!("####### About to handle_message....");
+        trace!("hydrabadger::Handler: About to handle_message....");
         if let Some(step_res) = state.handle_message(src_uid, msg) {
             let step = step_res.map_err(|err| {
                 error!("Honey Badger handle_message error: {:?}", err);
                 Error::HbStepError
             })?;
-            debug!("####### Message step result added to queue....");
+            trace!("hydrabadger::Handler: Message step result added to queue....");
             self.step_queue.push(step);
         }
         Ok(())
@@ -205,12 +207,12 @@ impl Handler {
             StateDsct::Observer => {
                 // TODO: Add checks to ensure that `net_info` is consistent
                 // with HB's netinfo.
-                warn!("Handler::instantiate_hb: Called when `State::Observer`");
+                warn!("hydrabadger::Handler::instantiate_hb: Called when `State::Observer`");
             },
             StateDsct::Validator => {
                 // TODO: Add checks to ensure that `net_info` is consistent
                 // with HB's netinfo.
-                warn!("Handler::instantiate_hb: Called when `State::Validator`")
+                warn!("hydrabadger::Handler::instantiate_hb: Called when `State::Validator`")
             },
         }
 
@@ -232,6 +234,7 @@ impl Handler {
         Ok(())
     }
 
+    // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED:
     fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
         match state {
             State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
@@ -308,17 +311,17 @@ impl Handler {
         debug!("Join plan: \n{:?}", jp);
 
         match state.discriminant() {
-            StateDsct::Disconnected => unimplemented!("Handler::handle_join_plan: `Disconnected`"),
+            StateDsct::Disconnected => unimplemented!("hydrabadger::Handler::handle_join_plan: `Disconnected`"),
             StateDsct::DeterminingNetworkState => {
                 info!("Received join plan.");
                 self.instantiate_hb(Some(jp), state, peers)?;
             },
             StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
-                panic!("Handler::handle_join_plan: Received join plan while \
+                panic!("hydrabadger::Handler::handle_join_plan: Received join plan while \
                     `AwaitingMorePeersForKeyGeneration` or `GeneratingKeys`");
             },
             StateDsct::Observer | StateDsct::Validator => {}, // Ignore
-            // sd @ _ => unimplemented!("Handler::handle_join_plan: {:?}", sd),
+            // sd @ _ => unimplemented!("hydrabadger::Handler::handle_join_plan: {:?}", sd),
         }
 
         Ok(())
@@ -525,7 +528,7 @@ impl Handler {
                     self.handle_join_plan(jp, state, &peers)?;
                 },
 
-                wm @ _ => warn!("Handler::handle_internal_message: Unhandled wire message: \
+                wm @ _ => warn!("hydrabadger::Handler::handle_internal_message: Unhandled wire message: \
                     \n{:?}", wm,),
             },
         }
@@ -542,9 +545,9 @@ impl Future for Handler {
         // Ensure the loop can't hog the thread for too long:
         const MESSAGES_PER_TICK: usize = 50;
 
-        trace!("Handler::poll: Locking 'state' for writing...");
+        trace!("hydrabadger::Handler::poll: Locking 'state' for writing...");
         let mut state = self.hdb.state_mut();
-        trace!("Handler::poll: 'state' locked for writing.");
+        trace!("hydrabadger::Handler::poll: 'state' locked for writing.");
 
          // Handle incoming internal messages:
         for i in 0..MESSAGES_PER_TICK {
@@ -579,7 +582,7 @@ impl Future for Handler {
         // // Forward outgoing messages:
         // if let Some(qhb) = state.qhb_mut() {
         //     for (i, hb_msg) in qhb.message_iter().enumerate() {
-        //         trace!("Forwarding message: {:?}", hb_msg);
+        //         trace!("hydrabadger::Handler: Forwarding message: {:?}", hb_msg);
         //         match hb_msg.target {
         //             Target::Node(p_uid) => {
         //                 self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
@@ -596,7 +599,7 @@ impl Future for Handler {
         //     }
         // }
 
-        debug!("####### Processing step queue....");
+        trace!("hydrabadger::Handler: Processing step queue....");
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
@@ -641,7 +644,7 @@ impl Future for Handler {
             }
 
             for hb_msg in step.messages.drain(..) {
-                trace!("Forwarding message: {:?}", hb_msg);
+                trace!("hydrabadger::Handler: Forwarding message: {:?}", hb_msg);
                 match hb_msg.target {
                     Target::Node(p_uid) => {
                         self.wire_to(p_uid, WireMessage::message(*self.hdb.uid(), hb_msg.message), 0, &peers);
@@ -658,11 +661,11 @@ impl Future for Handler {
 
         }
 
-        debug!("####### Step queue processing complete.");
+        trace!("hydrabadger::Handler: Step queue processing complete.");
 
         drop(peers);
         drop(state);
-        trace!("Handler::poll: 'state' unlocked for writing.");
+        trace!("hydrabadger::Handler::poll: 'state' unlocked for writing.");
 
         Ok(Async::NotReady)
     }
