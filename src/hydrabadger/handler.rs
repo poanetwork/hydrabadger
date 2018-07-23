@@ -24,7 +24,7 @@ use peer::Peers;
 use ::{InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
     OutAddr, InAddr, Uid, NetworkState, InternalRx, Step, Input, Message, NetworkNodeInfo};
 use super::{Hydrabadger, Error, State, StateDsct, InputOrMessage};
-use super::{HB_PEER_MINIMUM_COUNT, WIRE_MESSAGE_RETRY_MAX, EXTRA_DELAY_MS};
+use super::{WIRE_MESSAGE_RETRY_MAX};
 
 
 
@@ -84,7 +84,7 @@ impl Handler {
                 self.hdb.set_state_discriminant(state.discriminant());
             },
             StateDsct::AwaitingMorePeersForKeyGeneration => {
-                if peers.count_validators() >= HB_PEER_MINIMUM_COUNT {
+                if peers.count_validators() >= self.hdb.config().keygen_peer_count {
                     info!("== BEGINNING KEY GENERATION ==");
 
                     let local_uid = *self.hdb.uid();
@@ -92,7 +92,7 @@ impl Handler {
                     let local_sk = self.hdb.secret_key().public_key();
 
                     let (part, ack) = state.set_generating_keys(&local_uid,
-                        self.hdb.secret_key().clone(), peers);
+                        self.hdb.secret_key().clone(), peers, self.hdb.config());
                     self.hdb.set_state_discriminant(state.discriminant());
 
                     info!("KEY GENERATION: Sending initial parts and our own ack.");
@@ -142,11 +142,11 @@ impl Handler {
                     // },
                     Some(jp) => {
                         iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), jp)?);
+                            self.hdb.secret_key().clone(), jp, self.hdb.config())?);
                     },
                     None => {
                         iom_queue_opt = Some(state.set_validator(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), peers)?);
+                            self.hdb.secret_key().clone(), peers, self.hdb.config())?);
                     }
                 }
             },
@@ -260,6 +260,7 @@ impl Handler {
             -> Result<(), Error> {
 
         // FIXME: Queue acks until all parts are received.
+        let node_n = self.hdb.config().keygen_peer_count + 1;
 
         let mut complete = false;
         match state {
@@ -275,9 +276,8 @@ impl Handler {
                 debug!("   Peers complete: {}", sync_key_gen.count_complete());
                 debug!("   Part acks: {}", ack_count);
 
-                const NODE_N: usize = HB_PEER_MINIMUM_COUNT + 1;
-                if sync_key_gen.count_complete() >= NODE_N
-                        && *ack_count >= NODE_N * NODE_N {
+                if sync_key_gen.count_complete() == node_n
+                        && *ack_count >= node_n * node_n {
                     assert!(sync_key_gen.is_ready());
                     complete = true;
                 }
@@ -298,11 +298,12 @@ impl Handler {
     // 'unestablished' nodes.
     fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
             -> Result<(), Error> {
-        info!("Received join plan: {:?}", jp);
+        debug!("Join plan: \n{:?}", jp);
 
         match state.discriminant() {
             StateDsct::Disconnected => unimplemented!("Handler::handle_join_plan: `Disconnected`"),
             StateDsct::DeterminingNetworkState => {
+                info!("Received join plan.");
                 self.instantiate_hb(Some(jp), state, peers)?;
             },
             StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
@@ -620,9 +621,11 @@ impl Future for Handler {
                     },
                 }
 
-                if EXTRA_DELAY_MS > 0 {
-                    info!("Delaying batch processing thread (task) for {}ms", EXTRA_DELAY_MS);
-                    ::std::thread::sleep(::std::time::Duration::from_millis(EXTRA_DELAY_MS));
+                let extra_delay = self.hdb.config().output_extra_delay_ms;
+
+                if extra_delay > 0 {
+                    info!("Delaying batch processing thread (task) for {}ms", extra_delay);
+                    ::std::thread::sleep(::std::time::Duration::from_millis(extra_delay));
                 }
 
                 // TODO: Something useful!

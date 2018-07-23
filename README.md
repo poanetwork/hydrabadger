@@ -24,8 +24,7 @@ Each peer will generate a number of random transactions at regular intervals,
 process them accordingly, and output complete batches. If your terminal is
 spammed with batch outputs, consensus is working.
 
-Type `cargo run [--release] -- --help` (or `target/peer_node --help` if
-already built) for command line options (more coming soon!).
+Type `./run-node 0 --help` or `cargo run -- --help` for command line options.
 
 See the
 [`run-node`](https://github.com/c0gent/hydrabadger/blob/master/run-node)
@@ -33,7 +32,7 @@ script for additional optional environment variables that can be set.
 
 ### Current State
 
-Network initialization (with 5 nodes only), transaction generation, consensus,
+Network initialization node addition, transaction generation, consensus,
 and batch outputs are all generally working. Batch outputs for each epoch are
 printed to the log.
 
@@ -42,9 +41,6 @@ very well yet.
 
 #### Unimplemented
 
-* **Command-Line/Config Options:** Variable and/or random (within a range)
-  batch size, transaction size (bytes), transaction generation count,
-  transaction generation interval, minimum peer count, much more.
 * **Observer Nodes:** still in a state of flux (not working at the time of
   writing).
 * **Additional Nodes:** Only the first 5 nodes are properly handled (as

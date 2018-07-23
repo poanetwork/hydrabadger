@@ -59,7 +59,7 @@ use hbbft::{
     queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadgerStep},
 };
 
-pub use hydrabadger::{Hydrabadger};
+pub use hydrabadger::{Hydrabadger, Config};
 pub use blockchain::{Blockchain, MiningError};
 
 // FIME: TEMPORARY -- Create another error type.

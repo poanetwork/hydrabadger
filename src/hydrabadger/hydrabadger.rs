@@ -33,8 +33,43 @@ use peer::{PeerHandler, Peers};
 use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
     OutAddr, InAddr,  Uid, InternalTx, Transaction};
 use super::{Error, State, StateDsct, Handler};
-use super::{TXN_BYTES, NEW_TXN_INTERVAL_MS, NEW_TXNS_PER_INTERVAL, EXTRA_DELAY_MS};
 
+
+const EXTRA_DELAY_MS: u64 = 3000;
+
+const BATCH_SIZE: usize = 50;
+const NEW_TXNS_PER_INTERVAL: usize = 10;
+const NEW_TXN_INTERVAL_MS: u64 = 5000;
+const TXN_BYTES: usize = 4;
+
+// The minimum number of peers needed to spawn a HB instance.
+const HB_PEER_MINIMUM_COUNT: usize = 4;
+
+
+
+
+pub struct Config {
+    pub batch_size: usize,
+    pub txn_gen_count: usize,
+    pub txn_gen_interval: u64,
+    // TODO: Make this a range:
+    pub txn_bytes: usize,
+    pub keygen_peer_count: usize,
+    pub output_extra_delay_ms: u64,
+}
+
+impl Config {
+    pub fn new() -> Config {
+        Config {
+            batch_size: BATCH_SIZE,
+            txn_gen_count: NEW_TXNS_PER_INTERVAL,
+            txn_gen_interval: NEW_TXN_INTERVAL_MS,
+            txn_bytes: TXN_BYTES,
+            keygen_peer_count: HB_PEER_MINIMUM_COUNT,
+            output_extra_delay_ms: EXTRA_DELAY_MS,
+        }
+    }
+}
 
 
 /// The `Arc` wrapped portion of `Hydrabadger`.
@@ -57,6 +92,8 @@ struct Inner {
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx,
+
+    config: Config,
 }
 
 
@@ -69,7 +106,7 @@ pub struct Hydrabadger {
 
 impl Hydrabadger {
     /// Returns a new Hydrabadger node.
-    pub fn new(addr: SocketAddr) -> Self {
+    pub fn new(addr: SocketAddr, cfg: Config) -> Self {
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
@@ -94,6 +131,7 @@ impl Hydrabadger {
             state: RwLock::new(State::disconnected()),
             state_dsct: AtomicUsize::new(0),
             peer_internal_tx,
+            config: cfg,
         });
 
         let hdb = Hydrabadger {
@@ -147,6 +185,11 @@ impl Hydrabadger {
     /// Returns a mutable reference to the peers list.
     pub(crate) fn peers_mut(&self) -> RwLockWriteGuard<Peers> {
         self.inner.peers.write()
+    }
+
+    /// Returns a mutable reference to the peers list.
+    pub(crate) fn config(&self) -> &Config {
+        &self.inner.config
     }
 
     /// Sends a message on the internal tx.

@@ -12,22 +12,10 @@ use ::{Message, Input, Uid};
 use self::state::{State, StateDsct};
 use self::handler::{Handler};
 
-pub use self::hydrabadger::Hydrabadger;
-
-// If `true`, adds a delay to
-#[allow(dead_code)]
-const EXTRA_DELAY_MS: u64 = 3000;
-
-const BATCH_SIZE: usize = 50;
-const TXN_BYTES: usize = 4;
-const NEW_TXN_INTERVAL_MS: u64 = 5000;
-const NEW_TXNS_PER_INTERVAL: usize = 10;
-
-// The minimum number of peers needed to spawn a HB instance.
-const HB_PEER_MINIMUM_COUNT: usize = 4;
+pub use self::hydrabadger::{Hydrabadger, Config};
 
 // Number of times to attempt wire message re-send.
-const WIRE_MESSAGE_RETRY_MAX: usize = 10;
+pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 
 
 /// A HoneyBadger input or message.

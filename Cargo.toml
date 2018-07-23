@@ -47,7 +47,7 @@ clear_on_drop = "*"
 [dependencies.hbbft]
 version = "*"
 git = "https://github.com/c0gent/hbbft"
-# branch = "master"
-branch = "c0gent-sk-from"
+branch = "master"
+# branch = "c0gent-sk-from"
 # path = "../hbbft"
-features = ["serialization-protobuf"]
+# features = ["serialization-protobuf"]

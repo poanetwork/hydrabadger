@@ -20,8 +20,8 @@ use hbbft::{
 };
 use peer::Peers;
 use ::{Uid, NetworkState, NetworkNodeInfo, Message, Transaction, Step, Input};
-use super::{InputOrMessage, Error};
-use super::{BATCH_SIZE, HB_PEER_MINIMUM_COUNT};
+use super::{InputOrMessage, Error, Config};
+// use super::{BATCH_SIZE, config.keygen_peer_count};
 
 
 /// A `State` discriminant.
@@ -149,13 +149,14 @@ impl State {
     }
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
-    pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers)
+    pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers,
+        config: &Config)
             -> (Part, Ack) {
         let (part, ack);
         *self = match self {
             State::AwaitingMorePeersForKeyGeneration { ref mut iom_queue } => {
                 // let secret_key = secret_key.clone();
-                let threshold = HB_PEER_MINIMUM_COUNT / 3;
+                let threshold = config.keygen_peer_count / 3;
 
                 let mut public_keys: BTreeMap<Uid, PublicKey> = peers.validators().map(|p| {
                     p.pub_info().map(|(uid, _, pk)| (*uid, *pk)).unwrap()
@@ -212,8 +213,7 @@ impl State {
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_observer(&mut self, local_uid: Uid, local_sk: SecretKey,
-            // _net_node_info: Vec<NetworkNodeInfo>, pk_set: PublicKeySet, pk_map: BTreeMap<Uid, PublicKey>
-            jp: JoinPlan<Uid>) -> Result<SegQueue<InputOrMessage>, Error> {
+            jp: JoinPlan<Uid>, cfg: &Config) -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::DeterminingNetworkState { ref mut iom_queue } => {
@@ -234,7 +234,7 @@ impl State {
                 let dhb = DynamicHoneyBadgerBuilder::new_joining(local_uid, local_sk, jp)
                     .build()?;
 
-                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(BATCH_SIZE).build();
+                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(cfg.batch_size).build();
 
                 info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -250,7 +250,8 @@ impl State {
     //
     // TODO: Add proper error handling:
     #[must_use]
-    pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers)
+    pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers,
+            cfg: &Config)
             -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
@@ -262,7 +263,7 @@ impl State {
                 let (pk_set, sk_share_opt) = sync_key_gen.generate();
                 let sk_share = sk_share_opt.unwrap();
 
-                assert!(peers.count_validators() >= HB_PEER_MINIMUM_COUNT);
+                assert!(peers.count_validators() >= cfg.keygen_peer_count);
 
                 let mut node_ids: BTreeMap<Uid, PublicKey> = peers.validators().map(|p| {
                     (p.uid().cloned().unwrap(), p.public_key().cloned().unwrap())
@@ -280,7 +281,7 @@ impl State {
                 let dhb = DynamicHoneyBadger::builder(netinfo)
                     .build()
                     .expect("instantiate DHB");
-                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(BATCH_SIZE).build();
+                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(cfg.batch_size).build();
 
                 info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
