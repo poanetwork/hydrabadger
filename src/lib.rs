@@ -177,8 +177,8 @@ pub struct NetworkNodeInfo {
 pub enum NetworkState {
     None,
     Unknown(Vec<NetworkNodeInfo>),
-    AwaitingMorePeers(Vec<NetworkNodeInfo>),
-    GeneratingKeys(Vec<NetworkNodeInfo>),
+    AwaitingMorePeersForKeyGeneration(Vec<NetworkNodeInfo>),
+    GeneratingKeys(Vec<NetworkNodeInfo>, BTreeMap<Uid, PublicKey>),
     Active((Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)),
 }
 

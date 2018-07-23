@@ -216,7 +216,7 @@ impl Handler {
                         (FIXME: handle): {:?}", faults),
                     None => {
                         error!("`QueueingHoneyBadger::handle_part` returned `None`.");
-                        panic!("`QueueingHoneyBadger::handle_part` returned `None`.");
+                        // panic!("`QueueingHoneyBadger::handle_part` returned `None`.");
                         return;
                     }
                 };
@@ -235,7 +235,13 @@ impl Handler {
                 debug!("   Peers complete: {}", skg.count_complete());
                 debug!("   Part count: {}", part_count);
                 debug!("   Ack count: {}", ack_count);
-            }
+            },
+            State::DeterminingNetworkState { network_state, .. } => {
+                match network_state.is_some() {
+                    true => unimplemented!(),
+                    false => unimplemented!(),
+                }
+            },
             s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
                 State: \n{:?}", s.discriminant()),
         }
@@ -269,7 +275,7 @@ impl Handler {
             },
             State::Validator { .. } | State::Observer { .. } => {
                 error!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
-                panic!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
+                // panic!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
             }
             _ => panic!("::handle_key_gen_ack: State must be `GeneratingKeys`."),
         }
@@ -293,7 +299,7 @@ impl Handler {
             },
             StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
                 panic!("hydrabadger::Handler::handle_join_plan: Received join plan while \
-                    `AwaitingMorePeersForKeyGeneration` or `GeneratingKeys`");
+                    `{}`", state.discriminant());
             },
             StateDsct::Observer | StateDsct::Validator => {}, // Ignore
             // sd @ _ => unimplemented!("hydrabadger::Handler::handle_join_plan: {:?}", sd),
@@ -368,17 +374,30 @@ impl Handler {
                 state.update_peer_connection_added(peers);
                 self.hdb.set_state_discriminant(state.discriminant());
             }
-            NetworkState::AwaitingMorePeers(p_infos) => {
+            NetworkState::AwaitingMorePeersForKeyGeneration(p_infos) => {
                 peer_infos = p_infos;
                 state.set_awaiting_more_peers();
                 self.hdb.set_state_discriminant(state.discriminant());
             },
-            NetworkState::GeneratingKeys(p_infos) => {
+            NetworkState::GeneratingKeys(p_infos, public_keys) => {
                 peer_infos = p_infos;
                 // state.set_observer();
             },
             NetworkState::Active(net_info) => {
                 peer_infos = net_info.0.clone();
+                match state {
+                    State::DeterminingNetworkState { ref mut network_state, .. } => {
+                        *network_state = Some(NetworkState::Active(net_info));
+                    },
+                    | State::Disconnected { .. }
+                    | State::AwaitingMorePeersForKeyGeneration { .. }
+                    | State::GeneratingKeys { .. }  => {
+                        panic!("Handler::net_state: Received `NetworkState::Active` while `{}`.",
+                            state.discriminant());
+                    },
+                    _ => {},
+                }
+
                 // self.instantiate_hb(Some(net_info), peers, state)?;
             },
             NetworkState::None => panic!("`NetworkState::None` received."),
@@ -457,17 +476,38 @@ impl Handler {
                 // if let StateDsct::Disconnected = state.discriminant() {
                 //     state.set_awaiting_more_peers();
                 // }
-                match state.discriminant() {
-                    StateDsct::Disconnected | StateDsct::DeterminingNetworkState  => {
+
+                // match state.discriminant() {
+                //     StateDsct::Disconnected | StateDsct::DeterminingNetworkState  => {
+                //         state.set_awaiting_more_peers();
+                //         self.hdb.set_state_discriminant(state.discriminant());
+                //     },
+                //     _ => {},
+                // }
+
+                let net_state;
+
+                match state {
+                    State::Disconnected { } => {
                         state.set_awaiting_more_peers();
                         self.hdb.set_state_discriminant(state.discriminant());
-                        // state.peer_connection_added(&peers);
+                        net_state = state.network_state(&peers);
                     },
-                    _ => {},
+                    // | State::GeneratingKeys { .. }
+                    // | State::AwaitingMorePeersForKeyGeneration { .. }  => {
+                    //     net_state = state.network_state(&peers);
+                    // },
+                    State::DeterminingNetworkState { ref network_state, .. } => {
+                        match network_state {
+                            Some(ns) => net_state = ns.clone(),
+                            None => net_state = state.network_state(&peers)
+                        }
+                    },
+                    _ => net_state = state.network_state(&peers),
                 }
 
-                // Get the current `NetworkState`:
-                let net_state = state.network_state(&peers);
+                // // Get the current `NetworkState`:
+                // let net_state = state.network_state(&peers);
 
                 // Send response to remote peer:
                 peers.get(&src_out_addr).unwrap().tx().unbounded_send(

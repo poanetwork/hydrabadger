@@ -11,7 +11,7 @@ use std::{
 };
 use crossbeam::sync::SegQueue;
 use hbbft::{
-    crypto::{PublicKey, SecretKey, /*PublicKeySet*/},
+    crypto::{PublicKey, SecretKey},
     sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, NetworkInfo},
     queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger},
@@ -79,6 +79,7 @@ pub(crate) enum State {
     DeterminingNetworkState {
         ack_queue: Option<SegQueue<(Uid, Ack)>>,
         iom_queue: Option<SegQueue<InputOrMessage>>,
+        network_state: Option<NetworkState>,
     },
     AwaitingMorePeersForKeyGeneration {
         // Queued input to HoneyBadger:
@@ -89,6 +90,7 @@ pub(crate) enum State {
     GeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
+        public_keys: BTreeMap<Uid, PublicKey>,
 
         ack_queue: Option<SegQueue<(Uid, Ack)>>,
         part_count: usize,
@@ -148,16 +150,19 @@ impl State {
                     iom_queue: Some(SegQueue::new()),
                 }
             },
-            State::DeterminingNetworkState { ref mut iom_queue, ref mut ack_queue } => {
+            State::DeterminingNetworkState { ref mut iom_queue, ref mut ack_queue,
+                    ref network_state } => {
+                assert!(!network_state.is_some(),
+                    "State::set_awaiting_more_peers: Network is active!");
                 info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
                     ack_queue: ack_queue.take(),
                     iom_queue: iom_queue.take(),
                 }
-            }
-            _ => {
-                debug!("Attempted to set `State::AwaitingMorePeersForKeyGeneration` \
-                    while connected.");
+            },
+            s @ _ => {
+                debug!("State::set_awaiting_more_peers: Attempted to set \
+                    `State::AwaitingMorePeersForKeyGeneration` while {}.", s.discriminant());
                 return
             }
         };
@@ -203,6 +208,7 @@ impl State {
                 State::GeneratingKeys {
                     sync_key_gen: Some(sync_key_gen),
                     public_key: Some(pk),
+                    public_keys,
                     ack_queue: ack_queue.take(),
                     part_count: 1,
                     ack_count: 0,
@@ -318,6 +324,7 @@ impl State {
                 State::DeterminingNetworkState {
                     ack_queue: Some(SegQueue::new()),
                     iom_queue: Some(SegQueue::new()),
+                    network_state: None,
                 }
             },
             _ => return,
@@ -367,10 +374,10 @@ impl State {
         }).collect::<Vec<_>>();
         match self {
             State::AwaitingMorePeersForKeyGeneration { .. } => {
-                NetworkState::AwaitingMorePeers(peer_infos)
+                NetworkState::AwaitingMorePeersForKeyGeneration(peer_infos)
             },
-            State::GeneratingKeys{ .. } => {
-                NetworkState::GeneratingKeys(peer_infos)
+            State::GeneratingKeys{ ref public_keys, .. } => {
+                NetworkState::GeneratingKeys(peer_infos, public_keys.clone())
             },
             State::Observer { ref qhb } | State::Validator { ref qhb } => {
                 // FIXME: Ensure that `peer_info` matches `NetworkInfo` from HB.
@@ -419,9 +426,9 @@ impl State {
 
                 return step_opt;
             },
-            State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
-                    | State::GeneratingKeys { ref iom_queue, .. }
-                    | State::DeterminingNetworkState { ref iom_queue, .. } => {
+            | State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
+            | State::GeneratingKeys { ref iom_queue, .. }
+            | State::DeterminingNetworkState { ref iom_queue, .. } => {
                 trace!("State::input: Queueing input: {:?}", input);
                 iom_queue.as_ref().unwrap().push(InputOrMessage::Input(input));
             },
@@ -437,8 +444,8 @@ impl State {
     pub(super) fn handle_message(&mut self, src_uid: &Uid, msg: Message)
             -> Option<Result<Step, QhbError>> {
         match self {
-            State::Observer { ref mut qhb, .. }
-                    | State::Validator { ref mut qhb, .. } => {
+            | State::Observer { ref mut qhb, .. }
+            | State::Validator { ref mut qhb, .. } => {
                 trace!("State::handle_message: Handling message: {:?}", msg);
                 let step_opt = Some(qhb.as_mut().unwrap().handle_message(src_uid, msg));
 
@@ -452,9 +459,9 @@ impl State {
 
                 return step_opt;
             },
-            State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
-                    | State::GeneratingKeys { ref iom_queue, .. }
-                    | State::DeterminingNetworkState { ref iom_queue, .. } => {
+            | State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
+            | State::GeneratingKeys { ref iom_queue, .. }
+            | State::DeterminingNetworkState { ref iom_queue, .. } => {
                 trace!("State::handle_message: Queueing message: {:?}", msg);
                 iom_queue.as_ref().unwrap().push(InputOrMessage::Message(*src_uid, msg));
             },
