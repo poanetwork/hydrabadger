@@ -194,7 +194,7 @@ pub enum WireMessageKind {
     Goodbye,
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
-    Message(Message),
+    Message(Uid, Message),
     KeyGenPart(Part),
     KeyGenPartAck(Ack),
     JoinPlan(JoinPlan<Uid>)
@@ -209,25 +209,25 @@ pub struct WireMessage {
 }
 
 impl WireMessage {
-    pub fn hello_from_validator(uid: Uid, in_addr: InAddr, pk: PublicKey,
+    pub fn hello_from_validator(src_uid: Uid, in_addr: InAddr, pk: PublicKey,
             net_state: NetworkState) -> WireMessage {
-        WireMessageKind::HelloFromValidator(uid, in_addr, pk, net_state).into()
+        WireMessageKind::HelloFromValidator(src_uid, in_addr, pk, net_state).into()
     }
 
     /// Returns a `HelloRequestChangeAdd` variant.
-    pub fn hello_request_change_add(uid: Uid, in_addr: InAddr, pk: PublicKey) -> WireMessage {
-        WireMessage { kind: WireMessageKind::HelloRequestChangeAdd(uid, in_addr, pk), }
+    pub fn hello_request_change_add(src_uid: Uid, in_addr: InAddr, pk: PublicKey) -> WireMessage {
+        WireMessage { kind: WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, pk), }
     }
 
     /// Returns a `WelcomeReceivedChangeAdd` variant.
-    pub fn welcome_received_change_add(uid: Uid, pk: PublicKey, net_state: NetworkState)
+    pub fn welcome_received_change_add(src_uid: Uid, pk: PublicKey, net_state: NetworkState)
             -> WireMessage {
-        WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(uid, pk, net_state) }
+        WireMessage { kind: WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) }
     }
 
     /// Returns a `Message` variant.
-    pub fn message(msg: Message) -> WireMessage {
-        WireMessage { kind: WireMessageKind::Message(msg), }
+    pub fn message(src_uid: Uid, msg: Message) -> WireMessage {
+        WireMessage { kind: WireMessageKind::Message(src_uid, msg), }
     }
 
     pub fn key_gen_part(part: Part) -> WireMessage {

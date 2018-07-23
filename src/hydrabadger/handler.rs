@@ -58,10 +58,13 @@ impl Handler {
     }
 
     fn wire_to_validators(&self, msg: WireMessage, peers: &Peers) {
-        for peer in peers.validators()
-                .filter(|p| p.out_addr() != &OutAddr(self.hdb.addr().0)) {
-            peer.tx().unbounded_send(msg.clone()).unwrap();
-        }
+        // for peer in peers.validators()
+        //         .filter(|p| p.out_addr() != &OutAddr(self.hdb.addr().0)) {
+        //     peer.tx().unbounded_send(msg.clone()).unwrap();
+        // }
+
+        // FIXME(DEBUG): TEMPORARILY WIRE TO ALL FOR NOW:
+        self.wire_to_all(msg, peers)
     }
 
     // `tar_uid` of `None` sends to all peers.
@@ -124,6 +127,54 @@ impl Handler {
         }
     }
 
+    fn handle_input(&self, input: Input, state: &mut State) -> Result <(), Error> {
+        match &input {
+            QhbInput::User(_contrib) => {},
+            QhbInput::Change(ref qhb_change) => match qhb_change {
+                QhbChange::Add(uid, pk) => {
+                    if uid == self.hdb.uid() {
+                        debug_assert!(*pk == self.hdb.secret_key().public_key());
+                    }
+                }
+                QhbChange::Remove(_uid) => {},
+            },
+        }
+
+        debug!("####### About to input....");
+        if let Some(step_res) = state.input(input) {
+            let step = step_res.map_err(|err| {
+                error!("Honey Badger input error: {:?}", err);
+                Error::HbStepError
+            })?;
+            debug!("####### Input step result added to queue....");
+            self.step_queue.push(step);
+        }
+        Ok(())
+    }
+
+    fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State) -> Result <(), Error> {
+        trace!("HB_MESSAGE: {:?}", msg);
+        // match &msg {
+        //     // A message belonging to the `HoneyBadger` algorithm started in
+        //     // the given epoch.
+        //     DhbMessage::HoneyBadger(start_epoch, ref msg) => {},
+        //     // A transaction to be committed, signed by a node.
+        //     DhbMessage::KeyGen(epoch, _key_gen_msg, _sig) => {},
+        //     // A vote to be committed, signed by a validator.
+        //     DhbMessage::SignedVote(signed_vote) => {},
+        // }
+        debug!("####### About to handle_message....");
+        if let Some(step_res) = state.handle_message(src_uid, msg) {
+            let step = step_res.map_err(|err| {
+                error!("Honey Badger handle_message error: {:?}", err);
+                Error::HbStepError
+            })?;
+            debug!("####### Message step result added to queue....");
+            self.step_queue.push(step);
+        }
+        Ok(())
+    }
+
     // TODO: Create a type for `net_info`.
     fn instantiate_hb(&self,
             // net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
@@ -177,50 +228,6 @@ impl Handler {
                     }
                 }
             }
-        }
-        Ok(())
-    }
-
-    fn handle_input(&self, input: Input, state: &mut State) -> Result <(), Error> {
-        match &input {
-            QhbInput::User(_contrib) => {},
-            QhbInput::Change(ref qhb_change) => match qhb_change {
-                QhbChange::Add(uid, pk) => {
-                    if uid == self.hdb.uid() {
-                        assert!(*pk == self.hdb.secret_key().public_key());
-                    }
-                }
-                QhbChange::Remove(_uid) => {},
-            },
-        }
-
-        if let Some(step_res) = state.input(input) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger input error: {:?}", err);
-                Error::HbStepError
-            })?;
-            self.step_queue.push(step);
-        }
-        Ok(())
-    }
-
-    fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State) -> Result <(), Error> {
-        trace!("HB_MESSAGE: {:?}", msg);
-        // match &msg {
-        //     // A message belonging to the `HoneyBadger` algorithm started in
-        //     // the given epoch.
-        //     DhbMessage::HoneyBadger(start_epoch, ref msg) => {},
-        //     // A transaction to be committed, signed by a node.
-        //     DhbMessage::KeyGen(epoch, _key_gen_msg, _sig) => {},
-        //     // A vote to be committed, signed by a validator.
-        //     DhbMessage::SignedVote(signed_vote) => {},
-        // }
-        if let Some(step_res) = state.handle_message(src_uid, msg) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger handle_message error: {:?}", err);
-                Error::HbStepError
-            })?;
-            self.step_queue.push(step);
         }
         Ok(())
     }
@@ -589,6 +596,8 @@ impl Future for Handler {
         //     }
         // }
 
+        debug!("####### Processing step queue....");
+
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
             if step.output.len() > 0 { info!("NEW STEP OUTPUT:"); }
@@ -635,10 +644,10 @@ impl Future for Handler {
                 trace!("Forwarding message: {:?}", hb_msg);
                 match hb_msg.target {
                     Target::Node(p_uid) => {
-                        self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
+                        self.wire_to(p_uid, WireMessage::message(*self.hdb.uid(), hb_msg.message), 0, &peers);
                     },
                     Target::All => {
-                        self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
+                        self.wire_to_all(WireMessage::message(*self.hdb.uid(), hb_msg.message), &peers);
                     },
                 }
             }
@@ -648,6 +657,8 @@ impl Future for Handler {
             }
 
         }
+
+        debug!("####### Step queue processing complete.");
 
         drop(peers);
         drop(state);

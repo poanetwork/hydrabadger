@@ -119,12 +119,22 @@ impl Future for PeerHandler {
                             )
                         );
                     },
-                    WireMessageKind::Message(msg) => {
-                        let uid = self.uid.clone()
-                            .expect("`WireMessageKind::Message` received before \
-                                establishing peer");
+                    WireMessageKind::Message(src_uid, msg) => {
+                        // let uid = self.uid.clone()
+                        //     .expect("`WireMessageKind::Message` received before \
+                        //         establishing peer");
+
+                        // match  {
+                        //     Some() => ,
+                        //     None => {},
+                        // }
+
+                        if let Some(peer_uid) = self.uid.as_ref() {
+                            debug_assert_eq!(src_uid, *peer_uid);
+                        }
+
                         self.hdb.send_internal(
-                            InternalMessage::hb_message(uid, self.out_addr, msg)
+                            InternalMessage::hb_message(src_uid, self.out_addr, msg)
                         )
                     },
                     kind @ _ => {

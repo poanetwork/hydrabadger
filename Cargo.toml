@@ -46,8 +46,9 @@ clear_on_drop = "*"
 
 [dependencies.hbbft]
 version = "*"
-git = "https://github.com/c0gent/hbbft"
-branch = "master"
-# branch = "c0gent-sk-from"
+# git = "https://github.com/c0gent/hbbft"
+git = "https://github.com/poanetwork/hbbft"
+# branch = "master"
+branch = "afck-queue-fields"
 # path = "../hbbft"
 # features = ["serialization-protobuf"]
