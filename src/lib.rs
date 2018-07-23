@@ -54,9 +54,9 @@ use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     sync_key_gen::{Part, Ack},
-    // messaging::NetworkInfo,
+    messaging::Step as MessagingStep,
     dynamic_honey_badger::{Message as DhbMessage, JoinPlan},
-    queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadgerStep},
+    queueing_honey_badger::{QueueingHoneyBadger, Input as QhbInput},
 };
 
 pub use hydrabadger::{Hydrabadger, Config};
@@ -124,7 +124,7 @@ impl fmt::Debug for Uid {
 }
 
 type Message = DhbMessage<Uid>;
-type Step = QueueingHoneyBadgerStep<Vec<Transaction>, Uid>;
+type Step = MessagingStep<QueueingHoneyBadger<Vec<Transaction>, Uid>>;
 type Input = QhbInput<Vec<Transaction>, Uid>;
 
 /// A peer's incoming (listening) address.

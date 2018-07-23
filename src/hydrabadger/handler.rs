@@ -142,11 +142,11 @@ impl Handler {
                     // },
                     Some(jp) => {
                         iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), jp, self.hdb.config())?);
+                            self.hdb.secret_key().clone(), jp, self.hdb.config(), &self.step_queue)?);
                     },
                     None => {
                         iom_queue_opt = Some(state.set_validator(*self.hdb.uid(),
-                            self.hdb.secret_key().clone(), peers, self.hdb.config())?);
+                            self.hdb.secret_key().clone(), peers, self.hdb.config(), &self.step_queue)?);
                     }
                 }
             },
@@ -569,25 +569,25 @@ impl Future for Handler {
             }
         }
 
-        // Forward outgoing messages:
-        if let Some(qhb) = state.qhb_mut() {
-            for (i, hb_msg) in qhb.message_iter().enumerate() {
-                trace!("Forwarding message: {:?}", hb_msg);
-                match hb_msg.target {
-                    Target::Node(p_uid) => {
-                        self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
-                    },
-                    Target::All => {
-                        self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
-                    },
-                }
+        // // Forward outgoing messages:
+        // if let Some(qhb) = state.qhb_mut() {
+        //     for (i, hb_msg) in qhb.message_iter().enumerate() {
+        //         trace!("Forwarding message: {:?}", hb_msg);
+        //         match hb_msg.target {
+        //             Target::Node(p_uid) => {
+        //                 self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
+        //             },
+        //             Target::All => {
+        //                 self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
+        //             },
+        //         }
 
-                // Exceeded max messages per tick, schedule notification:
-                if i + 1 == MESSAGES_PER_TICK {
-                    task::current().notify();
-                }
-            }
-        }
+        //         // Exceeded max messages per tick, schedule notification:
+        //         if i + 1 == MESSAGES_PER_TICK * 5 {
+        //             task::current().notify();
+        //         }
+        //     }
+        // }
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
@@ -610,8 +610,8 @@ impl Future for Handler {
                         Change::Add(uid, pk) => {
                             if uid == self.hdb.uid() {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
-                                info!("=== PROMOTING NODE TO VALIDATOR ===");
                                 state.promote_to_validator()?;
+                                self.hdb.set_state_discriminant(state.discriminant());
 
                             }
                         },
@@ -624,12 +624,25 @@ impl Future for Handler {
                 let extra_delay = self.hdb.config().output_extra_delay_ms;
 
                 if extra_delay > 0 {
-                    info!("Delaying batch processing thread (task) for {}ms", extra_delay);
+                    info!("Delaying batch processing thread for {}ms", extra_delay);
                     ::std::thread::sleep(::std::time::Duration::from_millis(extra_delay));
                 }
 
                 // TODO: Something useful!
             }
+
+            for hb_msg in step.messages.drain(..) {
+                trace!("Forwarding message: {:?}", hb_msg);
+                match hb_msg.target {
+                    Target::Node(p_uid) => {
+                        self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
+                    },
+                    Target::All => {
+                        self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
+                    },
+                }
+            }
+
             if !step.fault_log.is_empty() {
                 error!("    FAULT LOG: \n{:?}", step.fault_log);
             }

@@ -38,7 +38,7 @@ use super::{Error, State, StateDsct, Handler};
 const EXTRA_DELAY_MS: u64 = 3000;
 
 const BATCH_SIZE: usize = 50;
-const NEW_TXNS_PER_INTERVAL: usize = 10;
+const NEW_TXNS_PER_INTERVAL: usize = 5;
 const NEW_TXN_INTERVAL_MS: u64 = 5000;
 const TXN_BYTES: usize = 4;
 

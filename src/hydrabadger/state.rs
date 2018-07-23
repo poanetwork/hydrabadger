@@ -15,7 +15,7 @@ use hbbft::{
     sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
     messaging::{DistAlgorithm, NetworkInfo},
     queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger},
-    dynamic_honey_badger::{DynamicHoneyBadger, DynamicHoneyBadgerBuilder, JoinPlan},
+    dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan},
 
 };
 use peer::Peers;
@@ -69,7 +69,10 @@ impl From<usize> for StateDsct {
 }
 
 
-// The current hydrabadger state.
+/// The current hydrabadger state.
+//
+// TODO: Make this into a struct and move the `state_dsct: AtomicUsize` field
+// into it.
 pub(crate) enum State {
     Disconnected { },
     DeterminingNetworkState {
@@ -193,48 +196,24 @@ impl State {
         (part, ack)
     }
 
-
-    // /// Changes the variant (in-place) of this `State` to `Observer`.
-    // //
-    // // TODO: Add proper error handling:
-    // pub(super) fn set_observer(&mut self) {
-    //     *self = match self {
-    //         State::DeterminingNetworkState { .. } => {
-    //             State::Observer { qhb: None }
-    //         },
-    //         _ => panic!("Must be `State::DeterminingNetworkState` before becoming \
-    //             `State::Observer`."),
-    //     };
-    //     // unimplemented!()
-    // }
-
     /// Changes the variant (in-place) of this `State` to `Observer`.
     //
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_observer(&mut self, local_uid: Uid, local_sk: SecretKey,
-            jp: JoinPlan<Uid>, cfg: &Config) -> Result<SegQueue<InputOrMessage>, Error> {
+            jp: JoinPlan<Uid>, cfg: &Config, step_queue: &SegQueue<Step>)
+            -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::DeterminingNetworkState { ref mut iom_queue } => {
-                // let sk_share = local_sk.clone().into();
+                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
+                    .build_joining(local_uid, local_sk, jp)?;
+                step_queue.push(dhb_step.convert());
 
-                // let netinfo = NetworkInfo::new(
-                //     local_uid,
-                //     sk_share,
-                //     pk_set,
-                //     local_sk,
-                //     pk_map,
-                // );
-
-                // let dhb = DynamicHoneyBadger::builder(netinfo)
-                //     .build()
-                //     .expect("Error instantiating DynamicHoneyBadger");
-
-                let dhb = DynamicHoneyBadgerBuilder::new_joining(local_uid, local_sk, jp)
-                    .build()?;
-
-                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(cfg.batch_size).build();
+                let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
+                    .batch_size(cfg.batch_size)
+                    .build();
+                step_queue.push(qhb_step);
 
                 info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -251,7 +230,7 @@ impl State {
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers,
-            cfg: &Config)
+            cfg: &Config, step_queue: &SegQueue<Step>)
             -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
@@ -278,10 +257,13 @@ impl State {
                     node_ids,
                 );
 
-                let dhb = DynamicHoneyBadger::builder(netinfo)
-                    .build()
-                    .expect("instantiate DHB");
-                let qhb = QueueingHoneyBadger::builder(dhb).batch_size(cfg.batch_size).build();
+                let dhb = DynamicHoneyBadger::builder()
+                    .build(netinfo);
+
+                let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
+                    .batch_size(cfg.batch_size)
+                    .build();
+                step_queue.push(qhb_step);
 
                 info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -297,6 +279,7 @@ impl State {
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
         *self = match self {
             State::Observer { ref mut qhb } => {
+                info!("=== PROMOTING NODE TO VALIDATOR ===");
                 State::Validator { qhb: qhb.take() }
             },
             s @ _ => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
