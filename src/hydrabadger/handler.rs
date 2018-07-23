@@ -15,7 +15,7 @@ use tokio::{
 };
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    sync_key_gen::{ Part, PartOutcome, Ack},
+    sync_key_gen::{Part, PartOutcome, Ack, SyncKeyGen},
     messaging::{DistAlgorithm, Target, },
     dynamic_honey_badger::{Message as DhbMessage, JoinPlan, Change, ChangeState},
     queueing_honey_badger::{Input as QhbInput, Change as QhbChange},
@@ -177,6 +177,131 @@ impl Handler {
         Ok(())
     }
 
+    fn handle_ack(&self, uid: &Uid, ack: Ack, sync_key_gen: &mut SyncKeyGen<Uid>,
+            ack_count: &mut usize) {
+        info!("KEY GENERATION: Handling ack from '{}'...", uid);
+        let fault_log = sync_key_gen.handle_ack(uid, ack.clone());
+        if !fault_log.is_empty() {
+            error!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
+            // panic!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
+        }
+        *ack_count += 1;
+    }
+
+    fn handle_queued_acks(&self, ack_queue: &SegQueue<(Uid, Ack)>,
+            sync_key_gen: &mut SyncKeyGen<Uid>, part_count: usize, ack_count: &mut usize) {
+        if part_count == self.hdb.config().keygen_peer_count + 1 {
+            info!("KEY GENERATION: Handling queued acks...");
+
+            debug!("   Peers complete: {}", sync_key_gen.count_complete());
+            debug!("   Part count: {}", part_count);
+            debug!("   Ack count: {}", ack_count);
+
+            while let Some((uid, ack)) = ack_queue.try_pop() {
+                self.handle_ack(&uid, ack, sync_key_gen, ack_count);
+            }
+        }
+    }
+
+    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
+        match state {
+            State::GeneratingKeys { ref mut sync_key_gen, ref ack_queue, ref mut part_count,
+                    ref mut ack_count, .. } => {
+                // TODO: Move this match block into a function somewhere for re-use:
+                info!("KEY GENERATION: Handling part from '{}'...", src_uid);
+                let mut skg = sync_key_gen.as_mut().unwrap();
+                let ack = match skg.handle_part(src_uid, part) {
+                    Some(PartOutcome::Valid(ack)) => ack,
+                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
+                        (FIXME: handle): {:?}", faults),
+                    None => {
+                        error!("`QueueingHoneyBadger::handle_part` returned `None`.");
+                        panic!("`QueueingHoneyBadger::handle_part` returned `None`.");
+                        return;
+                    }
+                };
+
+                *part_count += 1;
+
+                info!("KEY GENERATION: Queueing `Ack`.");
+                ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
+
+                self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
+
+                let peers = self.hdb.peers();
+                info!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...", src_uid);
+                self.wire_to_validators(WireMessage::key_gen_part_ack(ack), &peers);
+
+                debug!("   Peers complete: {}", skg.count_complete());
+                debug!("   Part count: {}", part_count);
+                debug!("   Ack count: {}", ack_count);
+            }
+            s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
+                State: \n{:?}", s.discriminant()),
+        }
+    }
+
+    fn handle_key_gen_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers)
+            -> Result<(), Error> {
+        let mut keygen_is_complete = false;
+        match state {
+            State::GeneratingKeys { ref mut sync_key_gen, ref ack_queue, ref part_count,
+                    ref mut ack_count, .. } => {
+                let mut skg = sync_key_gen.as_mut().unwrap();
+
+                info!("KEY GENERATION: Queueing `Ack`.");
+                ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
+
+                self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
+
+                let node_n = self.hdb.config().keygen_peer_count + 1;
+
+                if skg.count_complete() == node_n
+                        && *ack_count >= node_n * node_n {
+                    info!("KEY GENERATION: All acks received and handled.");
+                    debug!("   Peers complete: {}", skg.count_complete());
+                    debug!("   Part count: {}", part_count);
+                    debug!("   Ack count: {}", ack_count);
+
+                    assert!(skg.is_ready());
+                    keygen_is_complete = true;
+                }
+            },
+            State::Validator { .. } | State::Observer { .. } => {
+                error!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
+                panic!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
+            }
+            _ => panic!("::handle_key_gen_ack: State must be `GeneratingKeys`."),
+        }
+        if keygen_is_complete {
+            self.instantiate_hb(None, state, peers)?;
+        }
+        Ok(())
+    }
+
+    // This may be called spuriously and only need be handled by
+    // 'unestablished' nodes.
+    fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
+            -> Result<(), Error> {
+        debug!("Join plan: \n{:?}", jp);
+
+        match state.discriminant() {
+            StateDsct::Disconnected => unimplemented!("hydrabadger::Handler::handle_join_plan: `Disconnected`"),
+            StateDsct::DeterminingNetworkState => {
+                info!("Received join plan.");
+                self.instantiate_hb(Some(jp), state, peers)?;
+            },
+            StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
+                panic!("hydrabadger::Handler::handle_join_plan: Received join plan while \
+                    `AwaitingMorePeersForKeyGeneration` or `GeneratingKeys`");
+            },
+            StateDsct::Observer | StateDsct::Validator => {}, // Ignore
+            // sd @ _ => unimplemented!("hydrabadger::Handler::handle_join_plan: {:?}", sd),
+        }
+
+        Ok(())
+    }
+
     // TODO: Create a type for `net_info`.
     fn instantiate_hb(&self,
             // net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
@@ -231,99 +356,6 @@ impl Handler {
                 }
             }
         }
-        Ok(())
-    }
-
-    // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED:
-    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
-        match state {
-            State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
-                // TODO: Move this match block into a function somewhere for re-use:
-                info!("KEY GENERATION: Processing part from {}...", src_uid);
-                let ack = match sync_key_gen.as_mut().unwrap().handle_part(src_uid, part) {
-                    Some(PartOutcome::Valid(ack)) => ack,
-                    Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
-                        (FIXME: handle): {:?}", faults),
-                    None => {
-                        error!("`QueueingHoneyBadger::handle_part` returned `None`.");
-                        return;
-                    }
-                };
-
-                // Handle our own ack (TODO: Move this for re-use):
-                let fault_log = sync_key_gen.as_mut().unwrap().handle_ack(src_uid, ack.clone());
-                if !fault_log.is_empty() {
-                    error!("Errors acknowledging part:\n{:?}", fault_log);
-                }
-                *ack_count += 1;
-
-                let peers = self.hdb.peers();
-                info!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting...", src_uid);
-                self.wire_to_validators(WireMessage::key_gen_part_ack(ack), &peers);
-            }
-            s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
-                State: \n{:?}", s.discriminant()),
-        }
-    }
-
-    fn handle_key_gen_part_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers)
-            -> Result<(), Error> {
-
-        // FIXME: Queue acks until all parts are received.
-        let node_n = self.hdb.config().keygen_peer_count + 1;
-
-        let mut complete = false;
-        match state {
-            State::GeneratingKeys { ref mut sync_key_gen, ref mut ack_count, .. } => {
-                let mut sync_key_gen = sync_key_gen.as_mut().unwrap();
-                info!("KEY GENERATION: Processing ack from '{}'...", src_uid);
-                let fault_log = sync_key_gen.handle_ack(src_uid, ack);
-                if !fault_log.is_empty() {
-                    error!("Errors acknowledging part:\n {:?}", fault_log);
-                }
-                *ack_count += 1;
-
-                debug!("   Peers complete: {}", sync_key_gen.count_complete());
-                debug!("   Part acks: {}", ack_count);
-
-                if sync_key_gen.count_complete() == node_n
-                        && *ack_count >= node_n * node_n {
-                    assert!(sync_key_gen.is_ready());
-                    complete = true;
-                }
-            },
-            State::Validator { .. } | State::Observer { .. } => {
-                warn!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
-            }
-            _ => panic!("::handle_key_gen_part_ack: State must be `GeneratingKeys`."),
-        }
-
-        if complete {
-            self.instantiate_hb(None, state, peers)?;
-        }
-        Ok(())
-    }
-
-    // This may be called spuriously and only need be handled by
-    // 'unestablished' nodes.
-    fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
-            -> Result<(), Error> {
-        debug!("Join plan: \n{:?}", jp);
-
-        match state.discriminant() {
-            StateDsct::Disconnected => unimplemented!("hydrabadger::Handler::handle_join_plan: `Disconnected`"),
-            StateDsct::DeterminingNetworkState => {
-                info!("Received join plan.");
-                self.instantiate_hb(Some(jp), state, peers)?;
-            },
-            StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
-                panic!("hydrabadger::Handler::handle_join_plan: Received join plan while \
-                    `AwaitingMorePeersForKeyGeneration` or `GeneratingKeys`");
-            },
-            StateDsct::Observer | StateDsct::Validator => {}, // Ignore
-            // sd @ _ => unimplemented!("hydrabadger::Handler::handle_join_plan: {:?}", sd),
-        }
-
         Ok(())
     }
 
@@ -400,8 +432,10 @@ impl Handler {
             State::GeneratingKeys { .. } => {
                 // Do something here (possibly panic).
             },
-            State::Observer { .. } => {
-                // Do nothing?
+            State::Observer { ref mut qhb } => {
+                // Do nothing instead?
+                let step = qhb.as_mut().unwrap().input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
+                self.step_queue.push(step);
             }
             State::Validator { ref mut qhb } => {
                 let step = qhb.as_mut().unwrap().input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
@@ -516,9 +550,9 @@ impl Handler {
                 // Key gen proposal acknowledgement:
                 //
                 // FIXME: Queue until all parts have been sent.
-                WireMessageKind::KeyGenPartAck(ack) => {
+                WireMessageKind::KeyGenAck(ack) => {
                     let peers = self.hdb.peers();
-                    self.handle_key_gen_part_ack(&src_uid.unwrap(), ack, state, &peers)?;
+                    self.handle_key_gen_ack(&src_uid.unwrap(), ack, state, &peers)?;
                 },
 
                 // Output by validators when a batch with a `ChangeState`

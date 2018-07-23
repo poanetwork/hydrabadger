@@ -197,7 +197,7 @@ pub enum WireMessageKind {
     Message(Uid, Message),
     Transactions(Uid, Vec<Transaction>),
     KeyGenPart(Part),
-    KeyGenPartAck(Ack),
+    KeyGenAck(Ack),
     JoinPlan(JoinPlan<Uid>)
     // TargetedMessage(TargetedMessage<Uid>),
 }
@@ -241,7 +241,7 @@ impl WireMessage {
     }
 
     pub fn key_gen_part_ack(outcome: Ack) -> WireMessage {
-        WireMessageKind::KeyGenPartAck(outcome).into()
+        WireMessageKind::KeyGenAck(outcome).into()
     }
 
     pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage {

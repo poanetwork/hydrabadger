@@ -73,26 +73,28 @@ impl From<usize> for StateDsct {
 //
 // TODO: Make this into a struct and move the `state_dsct: AtomicUsize` field
 // into it.
+//
 pub(crate) enum State {
     Disconnected { },
     DeterminingNetworkState {
+        ack_queue: Option<SegQueue<(Uid, Ack)>>,
         iom_queue: Option<SegQueue<InputOrMessage>>,
     },
     AwaitingMorePeersForKeyGeneration {
         // Queued input to HoneyBadger:
         // FIXME: ACTUALLY USE THIS QUEUED INPUT!
+        ack_queue: Option<SegQueue<(Uid, Ack)>>,
         iom_queue: Option<SegQueue<InputOrMessage>>,
     },
     GeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
 
-        // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED
-
+        ack_queue: Option<SegQueue<(Uid, Ack)>>,
+        part_count: usize,
         ack_count: usize,
 
         // Queued input to HoneyBadger:
-        // FIXME: ACTUALLY USE THIS QUEUED INPUT!
         iom_queue: Option<SegQueue<InputOrMessage>>,
     },
     Observer {
@@ -141,11 +143,17 @@ impl State {
         *self = match self {
             State::Disconnected { } => {
                 info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
-                State::AwaitingMorePeersForKeyGeneration { iom_queue: Some(SegQueue::new()) }
+                State::AwaitingMorePeersForKeyGeneration {
+                    ack_queue: Some(SegQueue::new()),
+                    iom_queue: Some(SegQueue::new()),
+                }
             },
-            State::DeterminingNetworkState { ref mut iom_queue } => {
+            State::DeterminingNetworkState { ref mut iom_queue, ref mut ack_queue } => {
                 info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
-                State::AwaitingMorePeersForKeyGeneration { iom_queue: iom_queue.take() }
+                State::AwaitingMorePeersForKeyGeneration {
+                    ack_queue: ack_queue.take(),
+                    iom_queue: iom_queue.take(),
+                }
             }
             _ => {
                 debug!("Attempted to set `State::AwaitingMorePeersForKeyGeneration` \
@@ -157,11 +165,10 @@ impl State {
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers,
-        config: &Config)
-            -> (Part, Ack) {
+            config: &Config) -> (Part, Ack) {
         let (part, ack);
         *self = match self {
-            State::AwaitingMorePeersForKeyGeneration { ref mut iom_queue } => {
+            State::AwaitingMorePeersForKeyGeneration { ref mut iom_queue, ref mut ack_queue } => {
                 // let secret_key = secret_key.clone();
                 let threshold = config.keygen_peer_count / 3;
 
@@ -184,14 +191,23 @@ impl State {
                     None => unimplemented!(),
                 };
 
-                info!("KEY GENERATION: Handling our own `Ack`...");
-                let fault_log = sync_key_gen.handle_ack(local_uid, ack.clone());
-                if !fault_log.is_empty() {
-                    error!("Errors acknowledging part (from self):\n {:?}", fault_log);
-                }
+                // info!("KEY GENERATION: Handling our own `Ack`...");
+                // let fault_log = sync_key_gen.handle_ack(local_uid, ack.clone());
+                // if !fault_log.is_empty() {
+                //     error!("Errors acknowledging part (from self):\n {:?}", fault_log);
+                // }
 
-                State::GeneratingKeys { sync_key_gen: Some(sync_key_gen),
-                    public_key: Some(pk), ack_count: 1, iom_queue: iom_queue.take() }
+                info!("KEY GENERATION: Queueing our own `Ack`...");
+                ack_queue.as_ref().unwrap().push((*local_uid, ack.clone()));
+
+                State::GeneratingKeys {
+                    sync_key_gen: Some(sync_key_gen),
+                    public_key: Some(pk),
+                    ack_queue: ack_queue.take(),
+                    part_count: 1,
+                    ack_count: 0,
+                    iom_queue: iom_queue.take(),
+                }
             },
             _ => panic!("State::set_generating_keys: \
                 Must be State::AwaitingMorePeersForKeyGeneration"),
@@ -209,7 +225,7 @@ impl State {
             -> Result<SegQueue<InputOrMessage>, Error> {
         let iom_queue_ret;
         *self = match self {
-            State::DeterminingNetworkState { ref mut iom_queue } => {
+            State::DeterminingNetworkState { ref mut iom_queue, .. } => {
                 let (dhb, dhb_step) = DynamicHoneyBadger::builder()
                     .build_joining(local_uid, local_sk, jp)?;
                 step_queue.push(dhb_step.convert());
@@ -299,7 +315,10 @@ impl State {
         *self = match self {
             State::Disconnected { } => {
                 info!("Setting state: `DeterminingNetworkState`.");
-                State::DeterminingNetworkState { iom_queue: Some(SegQueue::new()) }
+                State::DeterminingNetworkState {
+                    ack_queue: Some(SegQueue::new()),
+                    iom_queue: Some(SegQueue::new()),
+                }
             },
             _ => return,
         };
@@ -400,7 +419,7 @@ impl State {
 
                 return step_opt;
             },
-            State::AwaitingMorePeersForKeyGeneration { ref iom_queue }
+            State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
                     | State::GeneratingKeys { ref iom_queue, .. }
                     | State::DeterminingNetworkState { ref iom_queue, .. } => {
                 trace!("State::input: Queueing input: {:?}", input);
@@ -433,7 +452,7 @@ impl State {
 
                 return step_opt;
             },
-            State::AwaitingMorePeersForKeyGeneration { ref iom_queue }
+            State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
                     | State::GeneratingKeys { ref iom_queue, .. }
                     | State::DeterminingNetworkState { ref iom_queue, .. } => {
                 trace!("State::handle_message: Queueing message: {:?}", msg);
