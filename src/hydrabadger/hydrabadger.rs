@@ -37,7 +37,7 @@ use super::{Error, State, StateDsct, Handler};
 
 const EXTRA_DELAY_MS: u64 = 3000;
 
-const BATCH_SIZE: usize = 50;
+const BATCH_SIZE: usize = 100;
 const NEW_TXNS_PER_INTERVAL: usize = 5;
 const NEW_TXN_INTERVAL_MS: u64 = 5000;
 const TXN_BYTES: usize = 4;
@@ -88,6 +88,8 @@ struct Inner {
 
     /// The current state containing HB when connected.
     state: RwLock<State>,
+
+    // TODO: Move this into a new state struct.
     state_dsct: AtomicUsize,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
@@ -173,7 +175,7 @@ impl Hydrabadger {
     /// Sets the publicly visible state discriminant and returns the previous value.
     pub(super) fn set_state_discriminant(&self, dsct: StateDsct) -> StateDsct {
         let sd = StateDsct::from(self.inner.state_dsct.swap(dsct.into(), Ordering::Release));
-        info!("State has been set to: {}", sd);
+        info!("State has been set from '{}' to '{}'.", sd, dsct);
         sd
     }
 
