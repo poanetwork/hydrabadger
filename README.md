@@ -1,13 +1,13 @@
-## Hydrabadger
+# Hydrabadger
 
 An experimental peer-to-peer client using the [Honey Badger Byzantine Fault
 Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
-### Usage
+## Usage
 
-#### Running a test peer
+### Running a test peer
 
-1. `git clone https://github.com/c0gent/hydrabadger`
+1. `git clone https://github.com/poanetwork/hydrabadger`
 2. `cd hydrabadger`
 3. `./run-node 0`
 
@@ -27,7 +27,7 @@ spammed with batch outputs, consensus is working.
 Type `./run-node 0 --help` or `cargo run -- --help` for command line options.
 
 See the
-[`run-node`](https://github.com/c0gent/hydrabadger/blob/master/run-node)
+[`run-node`](https://github.com/poanetwork/hydrabadger/blob/master/run-node)
 script for additional optional environment variables that can be set.
 
 ### Current State
@@ -39,12 +39,14 @@ printed to the log.
 Overall the client is fragile and doesn't handle deviation from simple usage
 very well yet.
 
-#### Unimplemented
+### Unimplemented
 
-* **Error handling** is atrocious, most errors are simply printed to the log.
 * **Many edge cases and exceptions:** disconnects, reconnects, etc.
-  * If too many nodes disconnect, the consensus process halts for all nodes
-    (as expected). No means of reconnection or node removal is yet in place.
+  * Connecting to a network which is in the process of key generation causes
+    the entire network to fail. For now, wait until the network starts
+    outputting batches before connecting additional peer nodes.
+* **Error handling** is atrocious, most errors are simply printed to the log.
+* **Usage as a library** is still a work in progress as the API settles.
 * **Much, much more...**
 
 ### License
