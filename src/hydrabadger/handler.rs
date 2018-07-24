@@ -71,7 +71,11 @@ impl Handler {
     fn wire_to(&self, tar_uid: Uid, msg: WireMessage, retry_count: usize, peers: &Peers) {
         match peers.get_by_uid(&tar_uid) {
             Some(p) => p.tx().unbounded_send(msg).unwrap(),
-            None => self.wire_queue.push((tar_uid, msg, retry_count + 1)),
+            None => {
+                info!("Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
+                    tar_uid, retry_count);
+                self.wire_queue.push((tar_uid, msg, retry_count + 1))
+            },
         }
     }
 
@@ -649,6 +653,7 @@ impl Future for Handler {
         // Process outgoing wire queue:
         while let Some((tar_uid, msg, retry_count)) = self.wire_queue.try_pop() {
             if retry_count < WIRE_MESSAGE_RETRY_MAX {
+                info!("Sending queued message from retry queue (retry_count: {}", retry_count);
                 self.wire_to(tar_uid, msg, retry_count + 1, &peers);
             }
         }
