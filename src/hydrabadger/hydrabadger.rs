@@ -35,17 +35,17 @@ use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
 use super::{Error, State, StateDsct, Handler};
 
 
-const EXTRA_DELAY_MS: u64 = 3000;
+// const EXTRA_DELAY_MS: u64 = 100;
 // const EXTRA_DELAY_MS: u64 = 2000;
-// const EXTRA_DELAY_MS: u64 = 0;
+const EXTRA_DELAY_MS: u64 = 0;
 
-const BATCH_SIZE: usize = 100;
-const NEW_TXNS_PER_INTERVAL: usize = 2;
-const NEW_TXN_INTERVAL_MS: u64 = 3000;
-const TXN_BYTES: usize = 1;
+const BATCH_SIZE: usize = 200;
+const NEW_TXNS_PER_INTERVAL: usize = 20;
+const NEW_TXN_INTERVAL_MS: u64 = 2000;
+const TXN_BYTES: usize = 8;
 
 // The minimum number of peers needed to spawn a HB instance.
-const HB_PEER_MINIMUM_COUNT: usize = 4;
+const HB_PEER_MINIMUM_COUNT: usize = 3;
 
 
 

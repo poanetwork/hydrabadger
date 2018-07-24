@@ -241,8 +241,24 @@ impl State {
                     .build();
                 step_queue.push(qhb_step);
 
-                info!("== HONEY BADGER INITIALIZED ==");
                 iom_queue_ret = iom_queue.take().unwrap();
+
+                info!("");
+                info!("== HONEY BADGER INITIALIZED ==");
+                info!("");
+
+                {
+                    let pk_set = qhb.dyn_hb().netinfo().public_key_set();
+                    let pk_map = qhb.dyn_hb().netinfo().public_key_map();
+                    info!("");
+                    info!("");
+                    info!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    info!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    info!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    info!("");
+                    info!("");
+                }
+
                 State::Observer { qhb: Some(qhb) }
             },
             s @ _ => panic!("State::set_observer: State must be `GeneratingKeys`. \
@@ -291,7 +307,23 @@ impl State {
                     .build();
                 step_queue.push(qhb_step);
 
+                info!("");
                 info!("== HONEY BADGER INITIALIZED ==");
+                info!("");
+
+                {
+                    let pk_set = qhb.dyn_hb().netinfo().public_key_set();
+                    let pk_map = qhb.dyn_hb().netinfo().public_key_map();
+                    info!("");
+                    info!("");
+                    info!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    info!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    info!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    info!("");
+                    info!("");
+                }
+
+
                 iom_queue_ret = iom_queue.take().unwrap();
                 State::Validator { qhb: Some(qhb) }
             },
