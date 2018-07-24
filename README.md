@@ -41,24 +41,11 @@ very well yet.
 
 #### Unimplemented
 
-* **Observer Nodes:** still in a state of flux (not working at the time of
-  writing).
-* **Additional Nodes:** Only the first 5 nodes are properly handled (as
-  validators). Variable and dynamic nodes are coming soon.
 * **Error handling** is atrocious, most errors are simply printed to the log.
 * **Many edge cases and exceptions:** disconnects, reconnects, etc.
   * If too many nodes disconnect, the consensus process halts for all nodes
     (as expected). No means of reconnection or node removal is yet in place.
 * **Much, much more...**
-
-#### Other Issues
-
-* `InvalidAckMessage` returned from `SyncKeyGen::handle_ack` seems to cause
-  `Node {..} received multiple Readys from {..}` messages which *may* be
-  causing occasional halting. Causes unclear.
-* `BatchDeserializationFailed` errors are common and appear to halt consensus.
-  New issue creation pending investigation [FIXED?].
-
 
 ### License
 
