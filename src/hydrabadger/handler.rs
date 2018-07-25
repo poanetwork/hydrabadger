@@ -8,7 +8,7 @@
     unreachable_code)]
 
 use std::collections::BTreeMap;
-use crossbeam::sync::SegQueue;
+use crossbeam::queue::SegQueue;
 use tokio::{
     self,
     prelude::*,

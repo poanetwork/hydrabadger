@@ -9,7 +9,7 @@ use std::{
     fmt,
     collections::BTreeMap,
 };
-use crossbeam::sync::SegQueue;
+use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
     sync_key_gen::{SyncKeyGen, Part, PartOutcome, Ack},
