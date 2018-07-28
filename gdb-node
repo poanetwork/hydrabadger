@@ -16,13 +16,9 @@
 #
 #
 
-let HOST_ID=$1
-let PEER_0_ID=$HOST_ID-1
-let PEER_1_ID=$HOST_ID+1
-
-printf -v HOST_PORT "3%03d" $HOST_ID
-printf -v PEER_0_PORT "3%03d" $PEER_0_ID
-printf -v PEER_1_PORT "3%03d" $PEER_1_ID
+let HOST_PORT=300$1
+let PEER_0_PORT=$HOST_PORT-1
+let PEER_1_PORT=$HOST_PORT+1
 
 HYDRABADGER_LOG=peer_node::hydrabadger=error,warn,info,$HYDRABADGER_LOG_ADDTL
 
@@ -38,9 +34,7 @@ else
 fi
 
 bash -c "\
-HYDRABADGER_LOG=$HYDRABADGER_LOG cargo run --bin peer_node \
-    $RELEASE \
-    -- \
+HYDRABADGER_LOG=$HYDRABADGER_LOG gdb -ex=r --args target/release/peer_node \
     -b localhost:$HOST_PORT \
     -r localhost:$PEER_0_PORT \
     -r localhost:$PEER_1_PORT\
