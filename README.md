@@ -28,7 +28,9 @@ Type `./run-node 0 --help` or `cargo run -- --help` for command line options.
 
 See the
 [`run-node`](https://github.com/poanetwork/hydrabadger/blob/master/run-node)
-script for additional optional environment variables that can be set.
+script for additional optional environment variables that can be set. To turn
+on debug log output: `export HYDRABADGER_LOG_ADDTL=debug` and/or `echo "export
+HYDRABADGER_LOG_ADDTL=debug" >> ~/.profile`.
 
 ### Current State
 

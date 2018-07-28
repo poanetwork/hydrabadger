@@ -23,3 +23,5 @@ Cargo.lock
 /src/junk
 /bak
 
+*.gz
+massif*

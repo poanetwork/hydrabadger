@@ -247,7 +247,7 @@ impl State {
                 info!("== HONEY BADGER INITIALIZED ==");
                 info!("");
 
-                {
+                { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
                     info!("");
@@ -311,7 +311,7 @@ impl State {
                 info!("== HONEY BADGER INITIALIZED ==");
                 info!("");
 
-                {
+                { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
                     info!("");

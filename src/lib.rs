@@ -1,4 +1,6 @@
+#![feature(alloc_system, allocator_api)]
 
+extern crate alloc_system;
 extern crate clap;
 extern crate env_logger;
 #[macro_use] extern crate log;
@@ -25,6 +27,11 @@ extern crate tokio_serde_bincode;
 extern crate parking_lot;
 extern crate clear_on_drop;
 extern crate hbbft;
+
+use alloc_system::System;
+
+#[global_allocator]
+static A: System = System;
 
 // pub mod network;
 pub mod hydrabadger;

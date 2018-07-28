@@ -43,9 +43,13 @@ cargo build $RELEASE
 # ulimit -Sv 400000
 
 bash -c "\
-HYDRABADGER_LOG=$HYDRABADGER_LOG gdb -ex=r --args target/release/peer_node \
+HYDRABADGER_LOG=$HYDRABADGER_LOG \
+    valgrind --tool=massif --massif-out-file="tmp/massif.out.node_$HOST_ID" \
+    target/$DIRECTORY/peer_node \
     -b localhost:$HOST_PORT \
     -r localhost:$PEER_0_PORT \
     -r localhost:$PEER_1_PORT\
     $2 $3 $4 $5 $6 $7 $8
 "
+
+# --pages-as-heap=yes \

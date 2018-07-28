@@ -247,7 +247,7 @@ impl Handler {
                 }
             },
             s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
-                State: \n{:?}", s.discriminant()),
+                State: \n{:?} \n\n[FIXME: Enqueue these parts!]\n\n", s.discriminant()),
         }
     }
 
@@ -686,6 +686,11 @@ impl Future for Handler {
 
             for batch in step.output.drain(..) {
                 info!("    BATCH: \n{:?}", batch);
+
+                if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {
+                    return Ok(Async::Ready(()))
+                }
+
                 if let Some(jp) = batch.join_plan() {
                     // FIXME: Only sent to unconnected nodes:
                     debug!("Outputting join plan: {:?}", jp);

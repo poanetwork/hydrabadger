@@ -17,7 +17,7 @@
 #
 
 let HOST_ID=$1
-let PEER_0_ID=$HOST_ID-1
+let PEER_0_ID=$HOST_ID==0?$HOST_ID+2:$HOST_ID-1
 let PEER_1_ID=$HOST_ID+1
 
 printf -v HOST_PORT "3%03d" $HOST_ID
@@ -29,18 +29,21 @@ HYDRABADGER_LOG=peer_node::hydrabadger=error,warn,info,$HYDRABADGER_LOG_ADDTL
 if [[ $HYDRABADGER_RELEASE ]]
 then
     case "$HYDRABADGER_RELEASE" in
-        0) RELEASE="" ;;
-        false) RELEASE="" ;;
-        *) RELEASE="--release" ;;
+        0|false) RELEASE=""; DIRECTORY="debug" ;;
+        *) RELEASE="--release"; DIRECTORY="release" ;;
     esac
 else
     RELEASE="--release"
+    DIRECTORY="release"
 fi
 
+cargo build $RELEASE
+
+# printf "\nLimiting process memory limit to 400MiB...\n\n"
+# ulimit -Sv 400000
+
 bash -c "\
-HYDRABADGER_LOG=$HYDRABADGER_LOG cargo run --bin peer_node \
-    $RELEASE \
-    -- \
+HYDRABADGER_LOG=$HYDRABADGER_LOG target/$DIRECTORY/peer_node \
     -b localhost:$HOST_PORT \
     -r localhost:$PEER_0_PORT \
     -r localhost:$PEER_1_PORT\

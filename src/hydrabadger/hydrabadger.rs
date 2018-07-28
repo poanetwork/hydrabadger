@@ -40,12 +40,12 @@ use super::{Error, State, StateDsct, Handler};
 const EXTRA_DELAY_MS: u64 = 0;
 
 const BATCH_SIZE: usize = 200;
-const NEW_TXNS_PER_INTERVAL: usize = 10;
-const NEW_TXN_INTERVAL_MS: u64 = 2000;
-const TXN_BYTES: usize = 8;
+const NEW_TXNS_PER_INTERVAL: usize = 5;
+const NEW_TXN_INTERVAL_MS: u64 = 5000;
+const TXN_BYTES: usize = 2;
 
 // The minimum number of peers needed to spawn a HB instance.
-const HB_PEER_MINIMUM_COUNT: usize = 9;
+const HB_PEER_MINIMUM_COUNT: usize = 3;
 
 
 

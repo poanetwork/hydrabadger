@@ -12,6 +12,10 @@ autobins = false
 name = "peer_node"
 path = "src/bin/peer_node.rs"
 
+[features]
+# Used for debugging memory usage.
+exit_upon_epoch_1000 = []
+
 [dependencies]
 log = "*"
 env_logger = "*"
@@ -52,3 +56,7 @@ git = "https://github.com/poanetwork/hbbft"
 branch = "afck-agreement"
 # path = "../hbbft"
 # features = ["serialization-protobuf"]
+
+[profile.release]
+debug = true
+debug-assertions = true

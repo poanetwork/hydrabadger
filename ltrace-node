@@ -42,10 +42,13 @@ cargo build $RELEASE
 # printf "\nLimiting process memory limit to 400MiB...\n\n"
 # ulimit -Sv 400000
 
+mkdir tmp
+
 bash -c "\
-HYDRABADGER_LOG=$HYDRABADGER_LOG gdb -ex=r --args target/release/peer_node \
+HYDRABADGER_LOG=$HYDRABADGER_LOG ltrace target/$DIRECTORY/peer_node \
     -b localhost:$HOST_PORT \
     -r localhost:$PEER_0_PORT \
     -r localhost:$PEER_1_PORT\
-    $2 $3 $4 $5 $6 $7 $8
+    $2 $3 $4 $5 $6 $7 $8 \
+    2>&1 | tee tmp/ltrace_peer_node_$1.log
 "
