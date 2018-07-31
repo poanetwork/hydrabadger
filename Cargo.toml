@@ -52,8 +52,8 @@ clear_on_drop = "*"
 version = "*"
 # git = "https://github.com/c0gent/hbbft"
 git = "https://github.com/poanetwork/hbbft"
-# branch = "master"
-branch = "afck-agreement"
+branch = "master"
+# branch = "afck-agreement"
 # path = "../hbbft"
 # features = ["serialization-protobuf"]
 
