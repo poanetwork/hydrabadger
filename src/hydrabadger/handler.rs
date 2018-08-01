@@ -653,30 +653,12 @@ impl Future for Handler {
         // Process outgoing wire queue:
         while let Some((tar_uid, msg, retry_count)) = self.wire_queue.try_pop() {
             if retry_count < WIRE_MESSAGE_RETRY_MAX {
-                info!("Sending queued message from retry queue (retry_count: {}", retry_count);
-                self.wire_to(tar_uid, msg, retry_count + 1, &peers);
+                info!("Sending queued message from retry queue (retry_count: {})", retry_count);
+                self.wire_to(tar_uid, msg, retry_count, &peers);
+            } else {
+                info!("Discarding queued message for '{}': {:?}", tar_uid, msg);
             }
         }
-
-        // // Forward outgoing messages:
-        // if let Some(qhb) = state.qhb_mut() {
-        //     for (i, hb_msg) in qhb.message_iter().enumerate() {
-        //         trace!("hydrabadger::Handler: Forwarding message: {:?}", hb_msg);
-        //         match hb_msg.target {
-        //             Target::Node(p_uid) => {
-        //                 self.wire_to(p_uid, WireMessage::message(hb_msg.message), 0, &peers);
-        //             },
-        //             Target::All => {
-        //                 self.wire_to_all(WireMessage::message(hb_msg.message), &peers);
-        //             },
-        //         }
-
-        //         // Exceeded max messages per tick, schedule notification:
-        //         if i + 1 == MESSAGES_PER_TICK * 5 {
-        //             task::current().notify();
-        //         }
-        //     }
-        // }
 
         trace!("hydrabadger::Handler: Processing step queue....");
 
@@ -699,16 +681,14 @@ impl Future for Handler {
 
                 match batch.change() {
                     ChangeState::None => {},
-                    ChangeState::InProgress(change) => {
-
-                    },
+                    ChangeState::InProgress(_change) => {},
                     ChangeState::Complete(change) => match change {
                         Change::Add(uid, pk) => {
                             if uid == self.hdb.uid() {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
+                                assert!(state.qhb().unwrap().dyn_hb().netinfo().is_validator());
                                 state.promote_to_validator()?;
                                 self.hdb.set_state_discriminant(state.discriminant());
-
                             }
                         },
                         Change::Remove(uid) => {
@@ -742,8 +722,11 @@ impl Future for Handler {
             if !step.fault_log.is_empty() {
                 error!("    FAULT LOG: \n{:?}", step.fault_log);
             }
-
         }
+
+        // TODO: Iterate through `state.qhb().unwrap().dyn_hb().netinfo()` and
+        // `peers` to ensure that the lists match. Make adjustments where
+        // necessary.
 
         trace!("hydrabadger::Handler: Step queue processing complete.");
 
