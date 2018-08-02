@@ -45,7 +45,7 @@ const NEW_TXN_INTERVAL_MS: u64 = 5000;
 const TXN_BYTES: usize = 2;
 
 // The minimum number of peers needed to spawn a HB instance.
-const HB_PEER_MINIMUM_COUNT: usize = 3;
+const HB_PEER_MINIMUM_COUNT: usize = 2;
 
 
 
