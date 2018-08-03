@@ -1,6 +1,6 @@
-#![feature(alloc_system, allocator_api)]
+// #![feature(alloc_system, allocator_api)]
+// extern crate alloc_system;
 
-extern crate alloc_system;
 extern crate clap;
 extern crate env_logger;
 #[macro_use] extern crate log;
@@ -28,10 +28,10 @@ extern crate parking_lot;
 extern crate clear_on_drop;
 extern crate hbbft;
 
-use alloc_system::System;
+// use alloc_system::System;
 
-#[global_allocator]
-static A: System = System;
+// #[global_allocator]
+// static A: System = System;
 
 // pub mod network;
 pub mod hydrabadger;
@@ -57,7 +57,7 @@ use tokio_io::codec::length_delimited::Framed;
 use bytes::{BytesMut, Bytes};
 use rand::{Rng, Rand};
 use uuid::Uuid;
-use bincode::{serialize, deserialize};
+// use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     sync_key_gen::{Part, Ack},
@@ -307,7 +307,7 @@ impl Stream for WireMessages {
             Some(frame) => {
                 Ok(Async::Ready(Some(
                     // deserialize_from(frame.reader()).map_err(Error::Serde)?
-                    deserialize(&frame.freeze()).map_err(Error::Serde)?
+                    bincode::deserialize(&frame.freeze()).map_err(Error::Serde)?
                 )))
             }
             None => Ok(Async::Ready(None))
@@ -322,7 +322,12 @@ impl Sink for WireMessages {
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         // TODO: Reuse buffer:
         let mut serialized = BytesMut::new();
-        match serialize(&item) {
+
+        // Downgraded from bincode 1.0:
+        //
+        // Original: `bincode::serialize(&item)`
+        //
+        match bincode::serialize(&item, bincode::Bounded(1 << 20)) {
             Ok(s) => serialized.extend_from_slice(&s),
             Err(err) => return Err(Error::Io(io::Error::new(io::ErrorKind::Other, err))),
         }
