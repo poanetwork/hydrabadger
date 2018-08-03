@@ -11,7 +11,7 @@ use std::{
         Arc,
     },
     collections::HashSet,
-    net::SocketAddr,
+    net::{SocketAddr, ToSocketAddrs},
 };
 use futures::{
     sync::mpsc,
@@ -48,8 +48,7 @@ const TXN_BYTES: usize = 2;
 const HB_PEER_MINIMUM_COUNT: usize = 2;
 
 
-
-
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub batch_size: usize,
     pub txn_gen_count: usize,
@@ -146,6 +145,11 @@ impl Hydrabadger {
         *hdb.handler.lock() = Some(Handler::new(hdb.clone(), peer_internal_rx));
 
         hdb
+    }
+
+    /// Returns a new Hydrabadger node.
+    pub fn with_defaults(addr: SocketAddr) -> Self {
+        Hydrabadger::new(addr, Config::new())
     }
 
     /// Returns the pre-created handler.
