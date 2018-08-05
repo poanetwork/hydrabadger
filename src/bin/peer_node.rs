@@ -120,7 +120,7 @@ fn main() {
         None => HashSet::new(),
     };
 
-    let mut cfg = Config::new();
+    let mut cfg = Config::default();
 
     if let Some(bs) = matches.value_of("batch-size") {
         cfg.batch_size = bs.parse().expect("Invalid batch size.");

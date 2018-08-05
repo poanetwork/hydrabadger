@@ -16,6 +16,7 @@ path = "src/bin/peer_node.rs"
 # Used for debugging memory usage.
 exit_upon_epoch_1000 = []
 
+
 [dependencies]
 log = "*"
 env_logger = "*"

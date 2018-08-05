@@ -60,7 +60,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Config {
+    pub fn with_defaults() -> Config {
         Config {
             batch_size: BATCH_SIZE,
             txn_gen_count: NEW_TXNS_PER_INTERVAL,
@@ -69,6 +69,12 @@ impl Config {
             keygen_peer_count: HB_PEER_MINIMUM_COUNT,
             output_extra_delay_ms: EXTRA_DELAY_MS,
         }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config::with_defaults()
     }
 }
 
@@ -149,7 +155,7 @@ impl Hydrabadger {
 
     /// Returns a new Hydrabadger node.
     pub fn with_defaults(addr: SocketAddr) -> Self {
-        Hydrabadger::new(addr, Config::new())
+        Hydrabadger::new(addr, Config::default())
     }
 
     /// Returns the pre-created handler.
