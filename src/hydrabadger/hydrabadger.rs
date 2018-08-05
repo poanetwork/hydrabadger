@@ -35,17 +35,19 @@ use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
 use super::{Error, State, StateDsct, Handler};
 
 
-// const EXTRA_DELAY_MS: u64 = 100;
-// const EXTRA_DELAY_MS: u64 = 2000;
-const EXTRA_DELAY_MS: u64 = 0;
-
-const BATCH_SIZE: usize = 200;
-const NEW_TXNS_PER_INTERVAL: usize = 5;
-const NEW_TXN_INTERVAL_MS: u64 = 5000;
-const TXN_BYTES: usize = 2;
-
+// The HoneyBadger batch size.
+const DEFAULT_BATCH_SIZE: usize = 200;
+// The number of random transactions to generate per interval.
+const DEFAULT_TXN_GEN_COUNT: usize = 5;
+// The interval between randomly generated transactions.
+const DEFAULT_TXN_GEN_INTERVAL: u64 = 5000;
+// The number of bytes per randomly generated transaction.
+const DEFAULT_TXN_GEN_BYTES: usize = 2;
 // The minimum number of peers needed to spawn a HB instance.
-const HB_PEER_MINIMUM_COUNT: usize = 2;
+const DEFAULT_KEYGEN_PEER_COUNT: usize = 2;
+// Causes the primary hydrabadger thread to sleep after every batch. Used for
+// debugging.
+const DEFAULT_OUTPUT_EXTRA_DELAY_MS: u64 = 0;
 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +56,7 @@ pub struct Config {
     pub txn_gen_count: usize,
     pub txn_gen_interval: u64,
     // TODO: Make this a range:
-    pub txn_bytes: usize,
+    pub txn_gen_bytes: usize,
     pub keygen_peer_count: usize,
     pub output_extra_delay_ms: u64,
 }
@@ -62,12 +64,12 @@ pub struct Config {
 impl Config {
     pub fn with_defaults() -> Config {
         Config {
-            batch_size: BATCH_SIZE,
-            txn_gen_count: NEW_TXNS_PER_INTERVAL,
-            txn_gen_interval: NEW_TXN_INTERVAL_MS,
-            txn_bytes: TXN_BYTES,
-            keygen_peer_count: HB_PEER_MINIMUM_COUNT,
-            output_extra_delay_ms: EXTRA_DELAY_MS,
+            batch_size: DEFAULT_BATCH_SIZE,
+            txn_gen_count: DEFAULT_TXN_GEN_COUNT,
+            txn_gen_interval: DEFAULT_TXN_GEN_INTERVAL,
+            txn_gen_bytes: DEFAULT_TXN_GEN_BYTES,
+            keygen_peer_count: DEFAULT_KEYGEN_PEER_COUNT,
+            output_extra_delay_ms: DEFAULT_OUTPUT_EXTRA_DELAY_MS,
         }
     }
 }
@@ -295,7 +297,7 @@ impl Hydrabadger {
     /// Returns a future that generates random transactions and logs status
     /// messages.
     fn generate_txns_status(self) -> impl Future<Item = (), Error = ()> {
-        Interval::new(Instant::now(), Duration::from_millis(NEW_TXN_INTERVAL_MS))
+        Interval::new(Instant::now(), Duration::from_millis(self.inner.config.txn_gen_interval))
             .for_each(move |_| {
                 let hdb = self.clone();
                 let peers = hdb.peers();
@@ -321,10 +323,10 @@ impl Hydrabadger {
 
                 match dsct {
                     StateDsct::Validator => {
-                        info!("Generating and inputting {} random transactions...", NEW_TXNS_PER_INTERVAL);
+                        info!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
                         // Send some random transactions to our internal HB instance.
-                        let txns: Vec<_> = (0..NEW_TXNS_PER_INTERVAL).map(|_| {
-                            Transaction::random(TXN_BYTES)
+                        let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
+                            Transaction::random(self.inner.config.txn_gen_bytes)
                         }).collect();
 
                         hdb.send_internal(

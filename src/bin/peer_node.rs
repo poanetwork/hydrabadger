@@ -12,7 +12,7 @@ use std::io::Write;
 use chrono::Local;
 use clap::{App, Arg, ArgMatches};
 use hydrabadger::{Config, Hydrabadger, Blockchain, MiningError};
-// use hydrabadger::{TXN_BYTES, NEW_TXN_INTERVAL_MS, NEW_TXNS_PER_INTERVAL, EXTRA_DELAY_MS,
+// use hydrabadger::{TXN_BYTES, DEFAULT_TXN_GEN_INTERVAL, NEW_TXNS_PER_INTERVAL, EXTRA_DELAY_MS,
 //     BATCH_SIZE, config.keygen_peer_count};
 
 
@@ -135,7 +135,7 @@ fn main() {
     }
 
     if let Some(tgb) = matches.value_of("txn-bytes") {
-        cfg.txn_bytes = tgb.parse().expect("Invalid transaction size (bytes).");
+        cfg.txn_gen_bytes = tgb.parse().expect("Invalid transaction size (bytes).");
     }
 
     if let Some(knc) = matches.value_of("keygen-node-count") {
