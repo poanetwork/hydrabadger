@@ -132,7 +132,7 @@ impl Hydrabadger {
                 )
             })
             .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
-            .init();
+            .try_init().ok();
 
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
@@ -148,6 +148,14 @@ impl Hydrabadger {
         warn!("");
         warn!("****** This is an alpha build. Do not use in production! ******");
         warn!("");
+
+        println!("");
+        println!("Local Hydrabadger Node: ");
+        println!("    UID:             {}", uid);
+        println!("    Socket Address:  {}", addr);
+        println!("    Public Key:      {:?}", secret_key.public_key());
+
+
 
         let inner = Arc::new(Inner {
             uid,
@@ -357,7 +365,7 @@ impl Hydrabadger {
     }
 
     /// Binds to a host address and returns a future which starts the node.
-    pub fn node(self, remotes: Option<HashSet<SocketAddr>>)
+    pub fn node(self, remotes: Option<HashSet<SocketAddr>>, reactor_remote: Option<()>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
@@ -391,7 +399,7 @@ impl Hydrabadger {
 
     /// Starts a node.
     pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {
-        tokio::run(self.node(remotes));
+        tokio::run(self.node(remotes, None));
     }
 
     pub fn addr(&self) -> &InAddr {
