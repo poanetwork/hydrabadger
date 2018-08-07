@@ -92,18 +92,6 @@ fn mine() -> Result<(), MiningError> {
 
 
 fn main() {
-    env_logger::Builder::new()
-        .format(|buf, record| {
-            write!(buf,
-                "{} [{}] - {}\n",
-                Local::now().format("%Y-%m-%dT%H:%M:%S"),
-                record.level(),
-                record.args()
-            )
-        })
-        .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
-        .init();
-
     let matches = arg_matches();
     let bind_address: SocketAddr = matches.value_of("bind-address")
         // TODO: Consider providing a default (and add to help info above).
@@ -115,7 +103,7 @@ fn main() {
 
     let remote_addresses: HashSet<SocketAddr> = match matches.values_of("remote-address") {
         Some(addrs) => addrs.flat_map(|addr| addr.to_socket_addrs()
-            .expect("Invalid remote bind address"))
+            .expect("Invalid remote address"))
             .collect(),
         None => HashSet::new(),
     };
@@ -151,7 +139,7 @@ fn main() {
     }
 
     let hb = Hydrabadger::new(bind_address, cfg);
-    hb.run_node(remote_addresses);
+    hb.run_node(Some(remote_addresses));
 
     // match mine() {
     //     Ok(_) => {},

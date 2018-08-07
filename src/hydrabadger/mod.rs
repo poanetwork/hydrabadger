@@ -7,6 +7,7 @@ use bincode;
 use hbbft::{
     dynamic_honey_badger::{Error as DhbError},
     queueing_honey_badger::{Error as QhbError},
+    sync_key_gen::{Error as SyncKeyGenError},
 };
 use ::{Message, Input, Uid};
 use self::state::{State, StateDsct};
@@ -46,6 +47,10 @@ pub enum Error {
     /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "QueuingHoneyBadger step error")]
     HbStepError,
+    #[fail(display = "Error creating SyncKeyGen: {}", _0)]
+    SyncKeyGenNew(SyncKeyGenError),
+    #[fail(display = "Error generating keys: {}", _0)]
+    SyncKeyGenGenerate(SyncKeyGenError),
 }
 
 impl From<std::io::Error> for Error {

@@ -80,7 +80,7 @@ impl Handler {
     }
 
     fn handle_new_established_peer(&self, src_uid: Uid, _src_addr: OutAddr, src_pk: PublicKey,
-             request_change_add: bool, state: &mut State, peers: &Peers) {
+             request_change_add: bool, state: &mut State, peers: &Peers) -> Result<(), Error> {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
                 // panic!("hydrabadger::Handler::handle_new_established_peer: \
@@ -99,7 +99,7 @@ impl Handler {
                     let local_sk = self.hdb.secret_key().public_key();
 
                     let (part, ack) = state.set_generating_keys(&local_uid,
-                        self.hdb.secret_key().clone(), peers, self.hdb.config());
+                        self.hdb.secret_key().clone(), peers, self.hdb.config())?;
                     self.hdb.set_state_discriminant(state.discriminant());
 
                     info!("KEY GENERATION: Sending initial parts and our own ack.");
@@ -131,6 +131,7 @@ impl Handler {
                 }
             },
         }
+        Ok(())
     }
 
     fn handle_input(&self, input: Input, state: &mut State) -> Result<(), Error> {
@@ -522,7 +523,7 @@ impl Handler {
 
                 // Modify state accordingly:
                 self.handle_new_established_peer(src_uid.unwrap(), src_out_addr, src_pk,
-                     request_change_add, state, &peers);
+                     request_change_add, state, &peers)?;
             },
 
             // New outgoing connection (initial):
@@ -583,7 +584,7 @@ impl Handler {
 
                     // Modify state accordingly:
                     self.handle_new_established_peer(src_uid_new, src_out_addr, src_pk,
-                        false, state, &peers);
+                        false, state, &peers)?;
                 },
 
                 // Key gen proposal:

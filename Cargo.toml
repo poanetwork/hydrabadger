@@ -19,7 +19,8 @@ exit_upon_epoch_1000 = []
 
 [dependencies]
 log = "*"
-env_logger = "*"
+# env_logger = "*"
+env_logger = "0.5"
 clap = "*"
 failure = "*"
 crossbeam = "~0.4.1"
@@ -51,11 +52,11 @@ clear_on_drop = "*"
 
 [dependencies.hbbft]
 version = "*"
-git = "https://github.com/c0gent/hbbft"
-# git = "https://github.com/poanetwork/hbbft"
-branch = "c0gent-supertraits"
+# git = "https://github.com/c0gent/hbbft"
+git = "https://github.com/poanetwork/hbbft"
+# branch = "c0gent-supertraits"
 # branch = "master"
-# branch = "afck-qhb-single"
+branch = "add-mlock-error-handling"
 # branch = "afck-agreement"
 # path = "../hbbft"
 # features = ["serialization-protobuf"]

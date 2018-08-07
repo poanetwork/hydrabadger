@@ -170,7 +170,7 @@ impl State {
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers,
-            config: &Config) -> (Part, Ack) {
+            config: &Config) -> Result<(Part, Ack), Error> {
         let (part, ack);
         *self = match self {
             State::AwaitingMorePeersForKeyGeneration { ref mut iom_queue, ref mut ack_queue } => {
@@ -185,7 +185,7 @@ impl State {
                 public_keys.insert(*local_uid, pk);
 
                 let (mut sync_key_gen, opt_part) = SyncKeyGen::new(*local_uid, local_sk,
-                    public_keys.clone(), threshold);
+                    public_keys.clone(), threshold).map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
                 info!("KEY GENERATION: Handling our own `Part`...");
@@ -219,7 +219,7 @@ impl State {
                 Must be State::AwaitingMorePeersForKeyGeneration"),
         };
 
-        (part, ack)
+        Ok((part, ack))
     }
 
     /// Changes the variant (in-place) of this `State` to `Observer`.
@@ -281,7 +281,8 @@ impl State {
                 let mut sync_key_gen = sync_key_gen.take().unwrap();
                 assert_eq!(public_key.take().unwrap(), local_sk.public_key());
 
-                let (pk_set, sk_share_opt) = sync_key_gen.generate();
+                let (pk_set, sk_share_opt) = sync_key_gen.generate()
+                    .map_err(Error::SyncKeyGenGenerate)?;
                 let sk_share = sk_share_opt.unwrap();
 
                 assert!(peers.count_validators() >= cfg.keygen_peer_count);

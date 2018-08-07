@@ -118,6 +118,22 @@ pub struct Hydrabadger {
 impl Hydrabadger {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config) -> Self {
+        use std::env;
+        use env_logger;
+        use chrono::Local;
+
+        env_logger::Builder::new()
+            .format(|buf, record| {
+                write!(buf,
+                    "{} [{}] - HYDRABADGER: {}\n",
+                    Local::now().format("%Y-%m-%dT%H:%M:%S"),
+                    record.level(),
+                    record.args()
+                )
+            })
+            .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
+            .init();
+
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
@@ -128,7 +144,6 @@ impl Hydrabadger {
         info!("    UID:             {}", uid);
         info!("    Socket Address:  {}", addr);
         info!("    Public Key:      {:?}", secret_key.public_key());
-        info!("");
 
         warn!("");
         warn!("****** This is an alpha build. Do not use in production! ******");
@@ -342,10 +357,12 @@ impl Hydrabadger {
     }
 
     /// Binds to a host address and returns a future which starts the node.
-    pub fn node(self, remotes: HashSet<SocketAddr>)
+    pub fn node(self, remotes: Option<HashSet<SocketAddr>>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
+
+        let remotes = remotes.unwrap_or(HashSet::new());
 
         let hdb = self.clone();
         let listen = socket.incoming()
@@ -373,7 +390,7 @@ impl Hydrabadger {
     }
 
     /// Starts a node.
-    pub fn run_node(self, remotes: HashSet<SocketAddr>) {
+    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {
         tokio::run(self.node(remotes));
     }
 
