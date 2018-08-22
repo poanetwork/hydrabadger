@@ -49,6 +49,8 @@ and etc
 
 8. `./compile`
 
+It may also be necessary for the reed-solomon-erasure package to change the branch to dev
+
 ### Current State
 
 Network initialization node addition, transaction generation, consensus,
