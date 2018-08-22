@@ -58,6 +58,11 @@ printed to the log.
 Overall the client is fragile and doesn't handle deviation from simple usage
 very well yet.
 
+### Test run Linux .so
+
+1. `cargo build`
+2. `./runTestPy`
+
 ### Unimplemented
 
 * **Many edge cases and exceptions:** disconnects, reconnects, etc.
