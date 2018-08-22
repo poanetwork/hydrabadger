@@ -1,0 +1,75 @@
+[package]
+name = "hydrabadger"
+version = "0.1.0"
+authors = ["c0gent <nsan1129@gmail.com>"]
+autobins = false
+
+# [[bin]]
+# name = "simulation"
+# path = "src/bin/simulation.rs"
+
+#[[bin]]
+#name = "peer_node"
+#path = "src/bin/peer_node.rs"
+
+#
+[target.'cfg(target_os="android")'.dependencies]
+jni = { version = "0.5", default-features = false }
+#
+[lib]
+crate-type = ["dylib"]
+#
+
+
+[features]
+# Used for debugging memory usage.
+exit_upon_epoch_1000 = []
+
+
+[dependencies]
+log = "*"
+# env_logger = "*"
+env_logger = "0.5"
+clap = "*"
+failure = "*"
+crossbeam = "~0.4.1"
+crossbeam-channel = "*"
+chrono = "*"
+rust-crypto = "*"
+num-traits = "*"
+num-bigint = "*"
+colored = "*"
+itertools = "*"
+pairing = "*"
+rand = "0.4.2"
+serde = "1"
+serde_bytes = "*"
+serde_derive = "1"
+signifix = "*"
+futures = "0.1"
+tokio = "0.1.7"
+tokio-codec = "*"
+tokio-io = "*"
+bincode = "0.8"
+tokio-serde = "*"
+tokio-serde-bincode = "*"
+bytes = "*"
+uuid = { version = "0.6", features = ["v4", "serde"] }
+byteorder = "*"
+parking_lot = "*"
+clear_on_drop = "*"
+
+[dependencies.hbbft]
+version = "*"
+# git = "https://github.com/c0gent/hbbft"
+git = "https://github.com/poanetwork/hbbft"
+# branch = "c0gent-supertraits"
+# branch = "master"
+branch = "add-mlock-error-handling"
+# branch = "afck-agreement"
+# path = "../hbbft"
+# features = ["serialization-protobuf"]
+
+[profile.release]
+debug = true
+debug-assertions = true
