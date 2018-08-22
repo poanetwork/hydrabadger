@@ -150,7 +150,7 @@ impl Future for PeerHandler {
             } else {
                 // EOF was reached. The remote client has disconnected. There is
                 // nothing more to do.
-                info!("Peer ({}: '{}') disconnected.", self.out_addr, self.uid.clone().unwrap());
+                println!("Peer ({}: '{}') disconnected.", self.out_addr, self.uid.clone().unwrap());
                 return Ok(Async::Ready(()));
             }
         }

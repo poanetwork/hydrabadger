@@ -139,12 +139,6 @@ impl Hydrabadger {
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
 
-        info!("");
-        info!("Local Hydrabadger Node: ");
-        info!("    UID:             {}", uid);
-        info!("    Socket Address:  {}", addr);
-        info!("    Public Key:      {:?}", secret_key.public_key());
-
         warn!("");
         warn!("****** This is an alpha build. Do not use in production! ******");
         warn!("");
@@ -212,7 +206,7 @@ impl Hydrabadger {
     /// Sets the publicly visible state discriminant and returns the previous value.
     pub(super) fn set_state_discriminant(&self, dsct: StateDsct) -> StateDsct {
         let sd = StateDsct::from(self.inner.state_dsct.swap(dsct.into(), Ordering::Release));
-        info!("State has been set from '{}' to '{}'.", sd, dsct);
+        println!("State has been set from '{}' to '{}'.", sd, dsct);
         sd
     }
 
@@ -242,7 +236,7 @@ impl Hydrabadger {
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream)
             -> impl Future<Item = (), Error = ()> {
-        info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
+        println!("Incoming connection from '{}'", socket.peer_addr().unwrap());
         let wire_msgs = WireMessages::new(socket);
 
         wire_msgs.into_future()
@@ -288,7 +282,7 @@ impl Hydrabadger {
             -> impl Future<Item = (), Error = ()> {
         let uid = self.inner.uid.clone();
         let in_addr = self.inner.addr;
-        info!("Initiating outgoing connection to: {}", remote_addr);
+        println!("Initiating outgoing connection to: {}", remote_addr);
 
         TcpStream::connect(&remote_addr)
             .map_err(Error::from)
@@ -328,14 +322,14 @@ impl Hydrabadger {
                 // Log state:
                 let (dsct, p_ttl, p_est) = hdb.state_info_stale();
                 let peer_count = peers.count_total();
-                info!("State: {:?}({})", dsct, peer_count);
+                println!("State: {:?}({})", dsct, peer_count);
 
                 // Log peer list:
                 let peer_list = peers.peers().map(|p| {
                     p.in_addr().map(|ia| ia.0.to_string())
                         .unwrap_or(format!("No in address"))
                 }).collect::<Vec<_>>();
-                info!("    Peers: {:?}", peer_list);
+                println!("    Peers: {:?}", peer_list);
 
                 // Log (trace) full peerhandler details:
                 trace!("PeerHandler list:");
@@ -346,7 +340,7 @@ impl Hydrabadger {
 
                 match dsct {
                     StateDsct::Validator => {
-                        info!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
+                        println!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
                         // Send some random transactions to our internal HB instance.
                         let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
                             Transaction::random(self.inner.config.txn_gen_bytes)
@@ -368,7 +362,7 @@ impl Hydrabadger {
     pub fn node(self, remotes: Option<HashSet<SocketAddr>>, reactor_remote: Option<()>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
-        info!("Listening on: {}", self.inner.addr);
+        println!("Listening on: {}", self.inner.addr);
 
         let remotes = remotes.unwrap_or(HashSet::new());
 

@@ -144,7 +144,7 @@ impl State {
     pub(super) fn set_awaiting_more_peers(&mut self) {
         *self = match self {
             State::Disconnected { } => {
-                info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                println!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
                     ack_queue: Some(SegQueue::new()),
                     iom_queue: Some(SegQueue::new()),
@@ -154,14 +154,14 @@ impl State {
                     ref network_state } => {
                 assert!(!network_state.is_some(),
                     "State::set_awaiting_more_peers: Network is active!");
-                info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                println!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
                     ack_queue: ack_queue.take(),
                     iom_queue: iom_queue.take(),
                 }
             },
             s @ _ => {
-                debug!("State::set_awaiting_more_peers: Attempted to set \
+                println!("State::set_awaiting_more_peers: Attempted to set \
                     `State::AwaitingMorePeersForKeyGeneration` while {}.", s.discriminant());
                 return
             }
@@ -188,7 +188,7 @@ impl State {
                     public_keys.clone(), threshold).map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
-                info!("KEY GENERATION: Handling our own `Part`...");
+                println!("KEY GENERATION: Handling our own `Part`...");
                 ack = match sync_key_gen.handle_part(&local_uid, part.clone()) {
                     Some(PartOutcome::Valid(ack)) => ack,
                     Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
@@ -202,7 +202,7 @@ impl State {
                 //     error!("Errors acknowledging part (from self):\n {:?}", fault_log);
                 // }
 
-                info!("KEY GENERATION: Queueing our own `Ack`...");
+                println!("KEY GENERATION: Queueing our own `Ack`...");
                 ack_queue.as_ref().unwrap().push((*local_uid, ack.clone()));
 
                 State::GeneratingKeys {
@@ -243,20 +243,20 @@ impl State {
 
                 iom_queue_ret = iom_queue.take().unwrap();
 
-                info!("");
-                info!("== HONEY BADGER INITIALIZED ==");
-                info!("");
+                println!("");
+                println!("== HONEY BADGER INITIALIZED ==");
+                println!("");
 
                 { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
-                    info!("");
-                    info!("");
-                    info!("PUBLIC KEY: {:?}", pk_set.public_key());
-                    info!("PUBLIC KEY SET: \n{:?}", pk_set);
-                    info!("PUBLIC KEY MAP: \n{:?}", pk_map);
-                    info!("");
-                    info!("");
+                    println!("");
+                    println!("");
+                    println!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    println!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    println!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    println!("");
+                    println!("");
                 }
 
                 State::Observer { qhb: Some(qhb) }
@@ -308,20 +308,20 @@ impl State {
                     .build();
                 step_queue.push(qhb_step);
 
-                info!("");
-                info!("== HONEY BADGER INITIALIZED ==");
-                info!("");
+                println!("");
+                println!("== HONEY BADGER INITIALIZED ==");
+                println!("");
 
                 { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
-                    info!("");
-                    info!("");
-                    info!("PUBLIC KEY: {:?}", pk_set.public_key());
-                    info!("PUBLIC KEY SET: \n{:?}", pk_set);
-                    info!("PUBLIC KEY MAP: \n{:?}", pk_map);
-                    info!("");
-                    info!("");
+                    println!("");
+                    println!("");
+                    println!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    println!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    println!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    println!("");
+                    println!("");
                 }
 
 
@@ -338,7 +338,7 @@ impl State {
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
         *self = match self {
             State::Observer { ref mut qhb } => {
-                info!("=== PROMOTING NODE TO VALIDATOR ===");
+                println!("=== PROMOTING NODE TO VALIDATOR ===");
                 State::Validator { qhb: qhb.take() }
             },
             s @ _ => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
@@ -353,7 +353,7 @@ impl State {
         let _dsct = self.discriminant();
         *self = match self {
             State::Disconnected { } => {
-                info!("Setting state: `DeterminingNetworkState`.");
+                println!("Setting state: `DeterminingNetworkState`.");
                 State::DeterminingNetworkState {
                     ack_queue: Some(SegQueue::new()),
                     iom_queue: Some(SegQueue::new()),
@@ -380,7 +380,7 @@ impl State {
                 return;
             },
             State::AwaitingMorePeersForKeyGeneration { .. } => {
-                debug!("Ignoring peer disconnection when \
+                println!("Ignoring peer disconnection when \
                     `State::AwaitingMorePeersForKeyGeneration`.");
                 return;
             },
@@ -388,11 +388,11 @@ impl State {
                 panic!("FIXME: RESTART KEY GENERATION PROCESS AFTER PEER DISCONNECTS.");
             }
             State::Observer { qhb: _, .. } => {
-                debug!("Ignoring peer disconnection when `State::Observer`.");
+                println!("Ignoring peer disconnection when `State::Observer`.");
                 return;
             },
             State::Validator { qhb: _, .. } => {
-                debug!("Ignoring peer disconnection when `State::Validator`.");
+                println!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             },
         }
