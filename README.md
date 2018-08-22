@@ -9,19 +9,28 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
 1. `git clone -b android git@github.com:poanetwork/hydrabadger.git`
 2. `cd hydrabadger`
+
 3. set needs environments 
+
 `export ANDROID_HOME=/Users/$USER/Library/Android/sdk`
 `export NDK_HOME=$ANDROID_HOME/ndk-bundle` 
+
 and etc
+
 4. make standalone NDK 
+
 `${NDK_HOME}/build/tools/make_standalone_toolchain.py --api 26 --arch arm64 --install-dir NDK/arm64`
 `${NDK_HOME}/build/tools/make_standalone_toolchain.py --api 26 --arch arm --install-dir NDK/arm`
 `${NDK_HOME}/build/tools/make_standalone_toolchain.py --api 26 --arch x86 --install-dir NDK/x86`
+
 5. set environment to NDK compilers and linkers
+
 `export PATH=$PATH:<project path>/NDK/arm64/bin/`
 `export PATH=$PATH:<project path>/NDK/arm/bin/`
 `export PATH=$PATH:<project path>/NDK/x86/bin/`
+
 6. make  cargo-config.toml 
+
 `[target.aarch64-linux-android]`
 `ar = "<project path>/NDK/arm64/bin/aarch64-linux-android-ar"`
 `linker = "<project path>/NDK/arm64/bin/aarch64-linux-android-clang"`
@@ -33,8 +42,11 @@ and etc
 `[target.i686-linux-android]`
 `ar = "<project path>/NDK/x86/bin/i686-linux-android-ar"`
 `linker = "<project path>/NDK/x86/bin/i686-linux-android-clang"'`
+
 7. need copy this config file to our .cargo directory like this:
+
 `cp cargo-config.toml ~/.cargo/config`
+
 8. `./compile`
 
 ### Current State
