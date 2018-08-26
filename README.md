@@ -5,21 +5,14 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
 ## Usage
 
-### Compile to android
+### Compile
 
-0. download
-* Android SDK Tools
-* NDK
-* CMake
-* LLDB
-
-1. `git clone git@github.com:KORuL/tokio_android.git`
-2. `cd tokio_android`
+1. `git clone -b android git@github.com:poanetwork/hydrabadger.git`
+2. `cd hydrabadger`
 
 3. set needs environments 
 
 `export ANDROID_HOME=/Users/$USER/Library/Android/sdk`
-
 `export NDK_HOME=$ANDROID_HOME/ndk-bundle` 
 
 and etc
@@ -54,9 +47,9 @@ and etc
 
 `cp cargo-config.toml ~/.cargo/config`
 
-8. `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android`
+7.1. `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android`
 
-9. `./compile`
+8. `./compile`
 
 It may also be necessary for the reed-solomon-erasure package to change the branch to dev
 
@@ -68,6 +61,11 @@ printed to the log.
 
 Overall the client is fragile and doesn't handle deviation from simple usage
 very well yet.
+
+### Test run Linux .so
+
+1. `cargo build`
+2. `./runTestPy`
 
 ### Unimplemented
 
