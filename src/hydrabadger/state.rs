@@ -133,7 +133,7 @@ impl State {
     // fn set_determining_network_state(&mut self) {
     //     *self = match self {
     //         State::Disconnected { } => {
-    //             info!("Setting state: `DeterminingNetworkState`.");
+    //             warn!("Setting state: `DeterminingNetworkState`.");
     //             State::DeterminingNetworkState { }
     //         },
     //         _ => panic!("Must be disconnected before calling `::peer_connection_added`."),
@@ -144,7 +144,7 @@ impl State {
     pub(super) fn set_awaiting_more_peers(&mut self) {
         *self = match self {
             State::Disconnected { } => {
-                println!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                warn!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
                     ack_queue: Some(SegQueue::new()),
                     iom_queue: Some(SegQueue::new()),
@@ -154,14 +154,14 @@ impl State {
                     ref network_state } => {
                 assert!(!network_state.is_some(),
                     "State::set_awaiting_more_peers: Network is active!");
-                println!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
+                warn!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
                     ack_queue: ack_queue.take(),
                     iom_queue: iom_queue.take(),
                 }
             },
             s @ _ => {
-                println!("State::set_awaiting_more_peers: Attempted to set \
+                debug!("State::set_awaiting_more_peers: Attempted to set \
                     `State::AwaitingMorePeersForKeyGeneration` while {}.", s.discriminant());
                 return
             }
@@ -188,7 +188,7 @@ impl State {
                     public_keys.clone(), threshold).map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
-                println!("KEY GENERATION: Handling our own `Part`...");
+                warn!("KEY GENERATION: Handling our own `Part`...");
                 ack = match sync_key_gen.handle_part(&local_uid, part.clone()) {
                     Some(PartOutcome::Valid(ack)) => ack,
                     Some(PartOutcome::Invalid(faults)) => panic!("Invalid part \
@@ -196,13 +196,13 @@ impl State {
                     None => unimplemented!(),
                 };
 
-                // info!("KEY GENERATION: Handling our own `Ack`...");
+                // warn!("KEY GENERATION: Handling our own `Ack`...");
                 // let fault_log = sync_key_gen.handle_ack(local_uid, ack.clone());
                 // if !fault_log.is_empty() {
                 //     error!("Errors acknowledging part (from self):\n {:?}", fault_log);
                 // }
 
-                println!("KEY GENERATION: Queueing our own `Ack`...");
+                warn!("KEY GENERATION: Queueing our own `Ack`...");
                 ack_queue.as_ref().unwrap().push((*local_uid, ack.clone()));
 
                 State::GeneratingKeys {
@@ -243,20 +243,20 @@ impl State {
 
                 iom_queue_ret = iom_queue.take().unwrap();
 
-                println!("");
-                println!("== HONEY BADGER INITIALIZED ==");
-                println!("");
+                warn!("");
+                warn!("== HONEY BADGER INITIALIZED ==");
+                warn!("");
 
                 { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
-                    println!("");
-                    println!("");
-                    println!("PUBLIC KEY: {:?}", pk_set.public_key());
-                    println!("PUBLIC KEY SET: \n{:?}", pk_set);
-                    println!("PUBLIC KEY MAP: \n{:?}", pk_map);
-                    println!("");
-                    println!("");
+                    warn!("");
+                    warn!("");
+                    warn!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    warn!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    warn!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    warn!("");
+                    warn!("");
                 }
 
                 State::Observer { qhb: Some(qhb) }
@@ -308,20 +308,20 @@ impl State {
                     .build();
                 step_queue.push(qhb_step);
 
-                println!("");
-                println!("== HONEY BADGER INITIALIZED ==");
-                println!("");
+                warn!("");
+                warn!("== HONEY BADGER INITIALIZED ==");
+                warn!("");
 
                 { // TODO: Consolidate or remove:
                     let pk_set = qhb.dyn_hb().netinfo().public_key_set();
                     let pk_map = qhb.dyn_hb().netinfo().public_key_map();
-                    println!("");
-                    println!("");
-                    println!("PUBLIC KEY: {:?}", pk_set.public_key());
-                    println!("PUBLIC KEY SET: \n{:?}", pk_set);
-                    println!("PUBLIC KEY MAP: \n{:?}", pk_map);
-                    println!("");
-                    println!("");
+                    warn!("");
+                    warn!("");
+                    warn!("PUBLIC KEY: {:?}", pk_set.public_key());
+                    warn!("PUBLIC KEY SET: \n{:?}", pk_set);
+                    warn!("PUBLIC KEY MAP: \n{:?}", pk_map);
+                    warn!("");
+                    warn!("");
                 }
 
 
@@ -338,7 +338,7 @@ impl State {
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
         *self = match self {
             State::Observer { ref mut qhb } => {
-                println!("=== PROMOTING NODE TO VALIDATOR ===");
+                warn!("=== PROMOTING NODE TO VALIDATOR ===");
                 State::Validator { qhb: qhb.take() }
             },
             s @ _ => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
@@ -353,7 +353,7 @@ impl State {
         let _dsct = self.discriminant();
         *self = match self {
             State::Disconnected { } => {
-                println!("Setting state: `DeterminingNetworkState`.");
+                warn!("Setting state: `DeterminingNetworkState`.");
                 State::DeterminingNetworkState {
                     ack_queue: Some(SegQueue::new()),
                     iom_queue: Some(SegQueue::new()),
@@ -380,7 +380,7 @@ impl State {
                 return;
             },
             State::AwaitingMorePeersForKeyGeneration { .. } => {
-                println!("Ignoring peer disconnection when \
+                debug!("Ignoring peer disconnection when \
                     `State::AwaitingMorePeersForKeyGeneration`.");
                 return;
             },
@@ -388,11 +388,11 @@ impl State {
                 panic!("FIXME: RESTART KEY GENERATION PROCESS AFTER PEER DISCONNECTS.");
             }
             State::Observer { qhb: _, .. } => {
-                println!("Ignoring peer disconnection when `State::Observer`.");
+                debug!("Ignoring peer disconnection when `State::Observer`.");
                 return;
             },
             State::Validator { qhb: _, .. } => {
-                println!("Ignoring peer disconnection when `State::Validator`.");
+                debug!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             },
         }

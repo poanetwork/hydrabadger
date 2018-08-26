@@ -3,9 +3,13 @@
 #[cfg(feature = "nightly")]
 extern crate alloc_system;
 extern crate clap;
+#[macro_use] extern crate log;
+extern crate android_logger;
+
+use android_logger::Filter;
+use log::Level;
+
 extern crate env_logger;
-#[macro_use]
-extern crate log;
 #[macro_use]
 extern crate failure;
 extern crate crossbeam;
@@ -440,8 +444,13 @@ use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::net::IpAddr;
 
+fn native_activity_create() {
+    android_logger::init_once(Filter::default().with_min_level(Level::Trace), None);
+}
+
 #[no_mangle]
-pub extern fn rust_main1() {
+pub extern fn startNode1() {
+    warn!("enter to startNode1");
     let bind_address: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3000);
     
     let mut remote_addresses: HashSet<SocketAddr> = HashSet::new();
@@ -451,11 +460,14 @@ pub extern fn rust_main1() {
     let cfg = Config::default();
 
     let hb = Hydrabadger::new(bind_address, cfg);
+    warn!("Hydrabadger::new");
     hb.run_node(Some(remote_addresses));
+    warn!("startNode1");
 }
 
 #[no_mangle]
-pub extern fn rust_main2() {
+pub extern fn startNode2() {
+    warn!("enter to startNode2");
     let bind_address: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3001);
     
     let mut remote_addresses: HashSet<SocketAddr> = HashSet::new();
@@ -466,10 +478,12 @@ pub extern fn rust_main2() {
 
     let hb = Hydrabadger::new(bind_address, cfg);
     hb.run_node(Some(remote_addresses));
+    warn!("startNode2");
 }
 
 #[no_mangle]
-pub extern fn rust_main3() {
+pub extern fn startNode3() {
+    warn!("enter to startNode3");
     let bind_address: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3002);
     
     let mut remote_addresses: HashSet<SocketAddr> = HashSet::new();
@@ -480,6 +494,14 @@ pub extern fn rust_main3() {
 
     let hb = Hydrabadger::new(bind_address, cfg);
     hb.run_node(Some(remote_addresses));
+    warn!("startNode3");
+}
+
+#[no_mangle]
+pub extern fn testLog() {
+    native_activity_create();
+
+    warn!("I am Started");
 }
 
 /// Expose the JNI interface for android below
@@ -496,22 +518,29 @@ pub mod android {
     #[no_mangle]
     pub unsafe extern fn Java_ru_hintsolution_hbbft_hbbft_MainActivity_startNode1(_env: JNIEnv, _: JClass) -> jboolean {
         // Our Java companion code might pass-in "world" as a string, hence the name.
-        rust_main1();
-        1
+        startNode1();
+	1
     }
 
     #[no_mangle]
     pub unsafe extern fn Java_ru_hintsolution_hbbft_hbbft_MainActivity_startNode2(_env: JNIEnv, _: JClass) -> jboolean {
         // Our Java companion code might pass-in "world" as a string, hence the name.
-        rust_main2();
-        1
+        startNode2();
+	1
     }
 
     #[no_mangle]
     pub unsafe extern fn Java_ru_hintsolution_hbbft_hbbft_MainActivity_startNode3(_env: JNIEnv, _: JClass) -> jboolean {
         // Our Java companion code might pass-in "world" as a string, hence the name.
-        rust_main3();
-        1
+        startNode3();
+	1
+    }
+
+    #[no_mangle]
+    pub unsafe extern fn Java_ru_hintsolution_hbbft_hbbft_MainActivity_testLog(_env: JNIEnv, _: JClass) -> jboolean {
+        // Our Java companion code might pass-in "world" as a string, hence the name.
+        testLog();
+	1
     }
 }
 

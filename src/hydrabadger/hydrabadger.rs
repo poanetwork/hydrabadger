@@ -122,22 +122,16 @@ impl Hydrabadger {
         use env_logger;
         use chrono::Local;
 
-        env_logger::Builder::new()
-            .format(|buf, record| {
-                write!(buf,
-                    "{} [{}] - HYDRABADGER: {}\n",
-                    Local::now().format("%Y-%m-%dT%H:%M:%S"),
-                    record.level(),
-                    record.args()
-                )
-            })
-            .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
-            .try_init().ok();
-
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
+
+        warn!("");
+        warn!("Local Hydrabadger Node: ");
+        warn!("    UID:             {}", uid);
+        warn!("    Socket Address:  {}", addr);
+        warn!("    Public Key:      {:?}", secret_key.public_key());
 
         warn!("");
         warn!("****** This is an alpha build. Do not use in production! ******");
@@ -206,7 +200,7 @@ impl Hydrabadger {
     /// Sets the publicly visible state discriminant and returns the previous value.
     pub(super) fn set_state_discriminant(&self, dsct: StateDsct) -> StateDsct {
         let sd = StateDsct::from(self.inner.state_dsct.swap(dsct.into(), Ordering::Release));
-        println!("State has been set from '{}' to '{}'.", sd, dsct);
+        warn!("State has been set from '{}' to '{}'.", sd, dsct);
         sd
     }
 
@@ -236,7 +230,7 @@ impl Hydrabadger {
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream)
             -> impl Future<Item = (), Error = ()> {
-        println!("Incoming connection from '{}'", socket.peer_addr().unwrap());
+        warn!("Incoming connection from '{}'", socket.peer_addr().unwrap());
         let wire_msgs = WireMessages::new(socket);
 
         wire_msgs.into_future()
@@ -282,7 +276,7 @@ impl Hydrabadger {
             -> impl Future<Item = (), Error = ()> {
         let uid = self.inner.uid.clone();
         let in_addr = self.inner.addr;
-        println!("Initiating outgoing connection to: {}", remote_addr);
+        warn!("Initiating outgoing connection to: {}", remote_addr);
 
         TcpStream::connect(&remote_addr)
             .map_err(Error::from)
@@ -322,14 +316,14 @@ impl Hydrabadger {
                 // Log state:
                 let (dsct, p_ttl, p_est) = hdb.state_info_stale();
                 let peer_count = peers.count_total();
-                println!("State: {:?}({})", dsct, peer_count);
+                warn!("State: {:?}({})", dsct, peer_count);
 
                 // Log peer list:
                 let peer_list = peers.peers().map(|p| {
                     p.in_addr().map(|ia| ia.0.to_string())
                         .unwrap_or(format!("No in address"))
                 }).collect::<Vec<_>>();
-                println!("    Peers: {:?}", peer_list);
+                warn!("    Peers: {:?}", peer_list);
 
                 // Log (trace) full peerhandler details:
                 trace!("PeerHandler list:");
@@ -340,7 +334,7 @@ impl Hydrabadger {
 
                 match dsct {
                     StateDsct::Validator => {
-                        println!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
+                        warn!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
                         // Send some random transactions to our internal HB instance.
                         let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
                             Transaction::random(self.inner.config.txn_gen_bytes)
@@ -362,7 +356,7 @@ impl Hydrabadger {
     pub fn node(self, remotes: Option<HashSet<SocketAddr>>, reactor_remote: Option<()>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
-        println!("Listening on: {}", self.inner.addr);
+        warn!("Listening on: {}", self.inner.addr);
 
         let remotes = remotes.unwrap_or(HashSet::new());
 
@@ -392,8 +386,8 @@ impl Hydrabadger {
     }
 
     /// Starts a node.
-    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {     
-	tokio::run(self.node(remotes, None));
+    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {
+        tokio::run(self.node(remotes, None));
     }
 
     pub fn addr(&self) -> &InAddr {

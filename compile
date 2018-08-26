@@ -7,3 +7,9 @@
 cargo build --target aarch64-linux-android --release
 cargo build --target armv7-linux-androideabi --release
 cargo build --target i686-linux-android --release
+
+
+
+cp -f /home/user/hbbft/greetings/hydrabadger_android/target/aarch64-linux-android/release/libhydrabadger.so /home/user/AndroidStudioProjects/hbbft/app/src/main/jniLibs/arm64/libhydrabadger.so
+cp -f /home/user/hbbft/greetings/hydrabadger_android/target/armv7-linux-androideabi/release/libhydrabadger.so /home/user/AndroidStudioProjects/hbbft/app/src/main/jniLibs/armeabi/libhydrabadger.so
+cp -f /home/user/hbbft/greetings/hydrabadger_android/target/i686-linux-android/release/libhydrabadger.so /home/user/AndroidStudioProjects/hbbft/app/src/main/jniLibs/x86/libhydrabadger.so

@@ -72,7 +72,7 @@ impl Handler {
         match peers.get_by_uid(&tar_uid) {
             Some(p) => p.tx().unbounded_send(msg).unwrap(),
             None => {
-                println!("Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
+                warn!("Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
                     tar_uid, retry_count);
                 self.wire_queue.push((tar_uid, msg, retry_count + 1))
             },
@@ -92,7 +92,7 @@ impl Handler {
             },
             StateDsct::AwaitingMorePeersForKeyGeneration => {
                 if peers.count_validators() >= self.hdb.config().keygen_peer_count {
-                    println!("== BEGINNING KEY GENERATION ==");
+                    warn!("== BEGINNING KEY GENERATION ==");
 
                     let local_uid = *self.hdb.uid();
                     let local_in_addr = *self.hdb.addr();
@@ -102,7 +102,7 @@ impl Handler {
                         self.hdb.secret_key().clone(), peers, self.hdb.config())?;
                     self.hdb.set_state_discriminant(state.discriminant());
 
-                    println!("KEY GENERATION: Sending initial parts and our own ack.");
+                    warn!("KEY GENERATION: Sending initial parts and our own ack.");
                     self.wire_to_validators(
                         WireMessage::hello_from_validator(
                             local_uid, local_in_addr, local_sk, state.network_state(&peers)),
@@ -124,7 +124,7 @@ impl Handler {
                 // validator), input the change into HB and broadcast, etc.
                 if request_change_add {
                     let qhb = state.qhb_mut().unwrap();
-                    println!("Change-Adding ('{}') to honey badger.", src_uid);
+                    warn!("Change-Adding ('{}') to honey badger.", src_uid);
                     let step = qhb.input(QhbInput::Change(QhbChange::Add(src_uid, src_pk)))
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
@@ -184,7 +184,7 @@ impl Handler {
 
     fn handle_ack(&self, uid: &Uid, ack: Ack, sync_key_gen: &mut SyncKeyGen<Uid>,
             ack_count: &mut usize) {
-        println!("KEY GENERATION: Handling ack from '{}'...", uid);
+        warn!("KEY GENERATION: Handling ack from '{}'...", uid);
         let fault_log = sync_key_gen.handle_ack(uid, ack.clone());
         if !fault_log.is_empty() {
             error!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
@@ -196,7 +196,7 @@ impl Handler {
     fn handle_queued_acks(&self, ack_queue: &SegQueue<(Uid, Ack)>,
             sync_key_gen: &mut SyncKeyGen<Uid>, part_count: usize, ack_count: &mut usize) {
         if part_count == self.hdb.config().keygen_peer_count + 1 {
-            println!("KEY GENERATION: Handling queued acks...");
+            warn!("KEY GENERATION: Handling queued acks...");
 
             debug!("   Peers complete: {}", sync_key_gen.count_complete());
             debug!("   Part count: {}", part_count);
@@ -213,7 +213,7 @@ impl Handler {
             State::GeneratingKeys { ref mut sync_key_gen, ref ack_queue, ref mut part_count,
                     ref mut ack_count, .. } => {
                 // TODO: Move this match block into a function somewhere for re-use:
-                println!("KEY GENERATION: Handling part from '{}'...", src_uid);
+                warn!("KEY GENERATION: Handling part from '{}'...", src_uid);
                 let mut skg = sync_key_gen.as_mut().unwrap();
                 let ack = match skg.handle_part(src_uid, part) {
                     Some(PartOutcome::Valid(ack)) => ack,
@@ -228,13 +228,13 @@ impl Handler {
 
                 *part_count += 1;
 
-                println!("KEY GENERATION: Queueing `Ack`.");
+                warn!("KEY GENERATION: Queueing `Ack`.");
                 ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
 
                 self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
 
                 let peers = self.hdb.peers();
-                println!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...", src_uid);
+                warn!("KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...", src_uid);
                 self.wire_to_validators(WireMessage::key_gen_part_ack(ack), &peers);
 
                 debug!("   Peers complete: {}", skg.count_complete());
@@ -260,7 +260,7 @@ impl Handler {
                     ref mut ack_count, .. } => {
                 let mut skg = sync_key_gen.as_mut().unwrap();
 
-                println!("KEY GENERATION: Queueing `Ack`.");
+                warn!("KEY GENERATION: Queueing `Ack`.");
                 ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
 
                 self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
@@ -269,10 +269,10 @@ impl Handler {
 
                 if skg.count_complete() == node_n
                         && *ack_count >= node_n * node_n {
-                    println!("KEY GENERATION: All acks received and handled.");
-                    println!("   Peers complete: {}", skg.count_complete());
-                    println!("   Part count: {}", part_count);
-                    println!("   Ack count: {}", ack_count);
+                    warn!("KEY GENERATION: All acks received and handled.");
+                    debug!("   Peers complete: {}", skg.count_complete());
+                    debug!("   Part count: {}", part_count);
+                    debug!("   Ack count: {}", ack_count);
 
                     assert!(skg.is_ready());
                     keygen_is_complete = true;
@@ -299,7 +299,7 @@ impl Handler {
         match state.discriminant() {
             StateDsct::Disconnected => unimplemented!("hydrabadger::Handler::handle_join_plan: `Disconnected`"),
             StateDsct::DeterminingNetworkState => {
-                println!("Received join plan.");
+                warn!("Received join plan.");
                 self.instantiate_hb(Some(jp), state, peers)?;
             },
             StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
@@ -323,7 +323,7 @@ impl Handler {
         match state.discriminant() {
             StateDsct::Disconnected => { unimplemented!() },
             StateDsct::DeterminingNetworkState | StateDsct::GeneratingKeys => {
-                println!("== INSTANTIATING HONEY BADGER ==");
+                warn!("== INSTANTIATING HONEY BADGER ==");
                 match jp_opt {
                     // Some((nni, pk_set, pk_map)) => {
                     //     iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
@@ -449,7 +449,7 @@ impl Handler {
                 // unimplemented!();
             },
             State::AwaitingMorePeersForKeyGeneration { .. } => {
-                // info!("Removing peer ({}: '{}') from await list.",
+                // warn!("Removing peer ({}: '{}') from await list.",
                 //     src_out_addr, src_uid.clone().unwrap());
                 // state.peer_connection_dropped(&*self.hdb.peers());
             },
@@ -548,7 +548,7 @@ impl Handler {
 
             InternalMessageKind::PeerDisconnect => {
                 let dropped_src_uid = src_uid.clone().unwrap();
-                println!("Peer disconnected: ({}: '{}').", src_out_addr, dropped_src_uid);
+                warn!("Peer disconnected: ({}: '{}').", src_out_addr, dropped_src_uid);
                 let peers = self.hdb.peers();
                 self.handle_peer_disconnect(dropped_src_uid, state, &peers)?;
             },
@@ -641,7 +641,7 @@ impl Future for Handler {
                 },
                 Ok(Async::Ready(None)) => {
                     // The sending ends have all dropped.
-                    println!("Shutting down Handler...");
+                    warn!("Shutting down Handler...");
                     return Ok(Async::Ready(()));
                 },
                 Ok(Async::NotReady) => {},
@@ -654,10 +654,10 @@ impl Future for Handler {
         // Process outgoing wire queue:
         while let Some((tar_uid, msg, retry_count)) = self.wire_queue.try_pop() {
             if retry_count < WIRE_MESSAGE_RETRY_MAX {
-                println!("Sending queued message from retry queue (retry_count: {})", retry_count);
+                warn!("Sending queued message from retry queue (retry_count: {})", retry_count);
                 self.wire_to(tar_uid, msg, retry_count, &peers);
             } else {
-                println!("Discarding queued message for '{}': {:?}", tar_uid, msg);
+                warn!("Discarding queued message for '{}': {:?}", tar_uid, msg);
             }
         }
 
@@ -665,10 +665,10 @@ impl Future for Handler {
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
-            if step.output.len() > 0 { println!("NEW STEP OUTPUT:"); }
+            if step.output.len() > 0 { warn!("NEW STEP OUTPUT:"); }
 
             for batch in step.output.drain(..) {
-                println!("    BATCH: \n{:?}", batch);
+                warn!("    BATCH: \n{:?}", batch);
 
                 if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {
                     return Ok(Async::Ready(()))
@@ -701,7 +701,7 @@ impl Future for Handler {
                 let extra_delay = self.hdb.config().output_extra_delay_ms;
 
                 if extra_delay > 0 {
-                    println!("Delaying batch processing thread for {}ms", extra_delay);
+                    warn!("Delaying batch processing thread for {}ms", extra_delay);
                     ::std::thread::sleep(::std::time::Duration::from_millis(extra_delay));
                 }
 
