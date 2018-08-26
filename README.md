@@ -47,6 +47,8 @@ and etc
 
 `cp cargo-config.toml ~/.cargo/config`
 
+7.1. `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android`
+
 8. `./compile`
 
 It may also be necessary for the reed-solomon-erasure package to change the branch to dev
