@@ -1,6 +1,7 @@
-# tokio_android
+# Hydrabadger
 
-Try use tokio example on android
+An experimental peer-to-peer client using the [Honey Badger Byzantine Fault
+Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
 ## Usage
 
@@ -53,25 +54,30 @@ and etc
 
 `cp cargo-config.toml ~/.cargo/config`
 
-7.1. `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android`
+8. `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android`
 
-8. `./compile`
+9. `./compile`
 
 It may also be necessary for the reed-solomon-erasure package to change the branch to dev
 
-### Compile to linux
-
-1. cargo build
-
 ### Current State
 
-Compile to android, work fine on linux, but on android crash
+Network initialization node addition, transaction generation, consensus,
+and batch outputs are all generally working. Batch outputs for each epoch are
+printed to the log.
 
-### Test run Linux .so
+Overall the client is fragile and doesn't handle deviation from simple usage
+very well yet.
 
-1. `cargo build`
-2. `./runTestPy`
+### Unimplemented
 
+* **Many edge cases and exceptions:** disconnects, reconnects, etc.
+  * Connecting to a network which is in the process of key generation causes
+    the entire network to fail. For now, wait until the network starts
+    outputting batches before connecting additional peer nodes.
+* **Error handling** is atrocious, most errors are simply printed to the log.
+* **Usage as a library** is still a work in progress as the API settles.
+* **Much, much more...**
 
 ### License
 
