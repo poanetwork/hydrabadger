@@ -122,18 +122,6 @@ impl Hydrabadger {
         use env_logger;
         use chrono::Local;
 
-        env_logger::Builder::new()
-            .format(|buf, record| {
-                write!(buf,
-                    "{} [{}] - HYDRABADGER: {}\n",
-                    Local::now().format("%Y-%m-%dT%H:%M:%S"),
-                    record.level(),
-                    record.args()
-                )
-            })
-            .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
-            .try_init().ok();
-
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
@@ -149,13 +137,11 @@ impl Hydrabadger {
         warn!("****** This is an alpha build. Do not use in production! ******");
         warn!("");
 
-        println!("");
-        println!("Local Hydrabadger Node: ");
-        println!("    UID:             {}", uid);
-        println!("    Socket Address:  {}", addr);
-        println!("    Public Key:      {:?}", secret_key.public_key());
-
-
+        // println!("");
+        // println!("Local Hydrabadger Node: ");
+        // println!("    UID:             {}", uid);
+        // println!("    Socket Address:  {}", addr);
+        // println!("    Public Key:      {:?}", secret_key.public_key());
 
         let inner = Arc::new(Inner {
             uid,
@@ -365,7 +351,7 @@ impl Hydrabadger {
     }
 
     /// Binds to a host address and returns a future which starts the node.
-    pub fn node(self, remotes: Option<HashSet<SocketAddr>>, reactor_remote: Option<()>)
+    pub fn node(self, remotes: Option<HashSet<SocketAddr>>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
@@ -399,7 +385,7 @@ impl Hydrabadger {
 
     /// Starts a node.
     pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {
-        tokio::run(self.node(remotes, None));
+        tokio::run(self.node(remotes));
     }
 
     pub fn addr(&self) -> &InAddr {

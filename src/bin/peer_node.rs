@@ -16,6 +16,7 @@ use hydrabadger::{Config, Hydrabadger, Blockchain, MiningError};
 //     BATCH_SIZE, config.keygen_peer_count};
 
 
+
 /// Returns parsed command line arguments.
 fn arg_matches<'a>() -> ArgMatches<'a> {
     App::new("hydrabadger")
@@ -92,6 +93,18 @@ fn mine() -> Result<(), MiningError> {
 
 
 fn main() {
+    env_logger::Builder::new()
+        .format(|buf, record| {
+            write!(buf,
+                "{} [{}] - HYDRABADGER: {}\n",
+                Local::now().format("%Y-%m-%dT%H:%M:%S"),
+                record.level(),
+                record.args()
+            )
+        })
+        .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
+        .try_init().ok();
+
     let matches = arg_matches();
     let bind_address: SocketAddr = matches.value_of("bind-address")
         // TODO: Consider providing a default (and add to help info above).
