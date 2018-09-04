@@ -274,6 +274,7 @@ impl Hydrabadger {
             -> impl Future<Item = (), Error = ()> {
         let uid = self.inner.uid.clone();
         let in_addr = self.inner.addr;
+
         info!("Initiating outgoing connection to: {}", remote_addr);
 
         TcpStream::connect(&remote_addr)
@@ -369,7 +370,7 @@ impl Hydrabadger {
         let hdb = self.clone();
         let local_pk = hdb.inner.secret_key.public_key();
         let connect = future::lazy(move || {
-            for &remote_addr in remotes.iter() {
+            for &remote_addr in remotes.iter().filter(|&&ra| ra != hdb.inner.addr.0) {
                 tokio::spawn(hdb.clone().connect_outgoing(remote_addr, local_pk, None, true));
             }
             Ok(())
