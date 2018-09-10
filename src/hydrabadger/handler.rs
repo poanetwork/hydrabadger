@@ -125,7 +125,7 @@ impl Handler {
                 if request_change_add {
                     let qhb = state.qhb_mut().unwrap();
                     info!("Change-Adding ('{}') to honey badger.", src_uid);
-                    let step = qhb.input(QhbInput::Change(QhbChange::Add(src_uid, src_pk)))
+                    let step = qhb.handle_input(QhbInput::Change(QhbChange::Add(src_uid, src_pk)))
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
                 }
@@ -458,11 +458,11 @@ impl Handler {
             },
             State::Observer { ref mut qhb } => {
                 // Do nothing instead?
-                let step = qhb.as_mut().unwrap().input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
+                let step = qhb.as_mut().unwrap().handle_input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
                 self.step_queue.push(step);
             }
             State::Validator { ref mut qhb } => {
-                let step = qhb.as_mut().unwrap().input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
+                let step = qhb.as_mut().unwrap().handle_input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
                 self.step_queue.push(step);
             },
         }

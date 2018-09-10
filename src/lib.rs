@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly", feature(alloc_system))]
+#![cfg_attr(feature = "nightly", feature(proc_macro))]
 
 #[cfg(feature = "nightly")]
 extern crate alloc_system;

@@ -300,8 +300,9 @@ impl State {
                     node_ids,
                 );
 
-                let dhb = DynamicHoneyBadger::builder()
-                    .build(netinfo);
+                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
+                    .build(netinfo)?;
+                step_queue.push(dhb_step.convert());
 
                 let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
                     .batch_size(cfg.batch_size)
@@ -447,7 +448,7 @@ impl State {
         match self {
             State::Observer { ref mut qhb, .. } | State::Validator { ref mut qhb, .. } => {
                 trace!("State::input: Inputting: {:?}", input);
-                let step_opt = Some(qhb.as_mut().unwrap().input(input));
+                let step_opt = Some(qhb.as_mut().unwrap().handle_input(input));
 
                 match step_opt {
                     Some(ref step) => match step {
