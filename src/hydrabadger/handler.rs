@@ -247,7 +247,7 @@ impl Handler {
                     false => unimplemented!(),
                 }
             },
-            s @ _ => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
+            s => panic!("::handle_key_gen_part: State must be `GeneratingKeys`. \
                 State: \n{:?} \n\n[FIXME: Enqueue these parts!]\n\n", s.discriminant()),
         }
     }

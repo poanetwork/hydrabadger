@@ -160,7 +160,7 @@ impl State {
                     iom_queue: iom_queue.take(),
                 }
             },
-            s @ _ => {
+            s => {
                 debug!("State::set_awaiting_more_peers: Attempted to set \
                     `State::AwaitingMorePeersForKeyGeneration` while {}.", s.discriminant());
                 return
@@ -261,7 +261,7 @@ impl State {
 
                 State::Observer { qhb: Some(qhb) }
             },
-            s @ _ => panic!("State::set_observer: State must be `GeneratingKeys`. \
+            s => panic!("State::set_observer: State must be `GeneratingKeys`. \
                 State: {}", s.discriminant()),
         };
         Ok(iom_queue_ret)
@@ -328,7 +328,7 @@ impl State {
                 iom_queue_ret = iom_queue.take().unwrap();
                 State::Validator { qhb: Some(qhb) }
             },
-            s @ _ => panic!("State::set_validator: State must be `GeneratingKeys`. State: {}",
+            s => panic!("State::set_validator: State must be `GeneratingKeys`. State: {}",
                 s.discriminant()),
         };
         Ok(iom_queue_ret)
@@ -341,7 +341,7 @@ impl State {
                 info!("=== PROMOTING NODE TO VALIDATOR ===");
                 State::Validator { qhb: qhb.take() }
             },
-            s @ _ => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
+            s => panic!("State::promote_to_validator: State must be `Observer`. State: {}",
                 s.discriminant()),
         };
         Ok(())
@@ -465,7 +465,7 @@ impl State {
                 trace!("State::input: Queueing input: {:?}", input);
                 iom_queue.as_ref().unwrap().push(InputOrMessage::Input(input));
             },
-            s @ _ => panic!("State::handle_message: Must be connected in order to input to \
+            s => panic!("State::handle_message: Must be connected in order to input to \
                 honey badger. State: {}", s.discriminant()),
         }
         None
@@ -501,7 +501,7 @@ impl State {
             // State::GeneratingKeys { ref iom_queue, .. } => {
             //     iom_queue.as_ref().unwrap().push(InputOrMessage::Message(msg));
             // },
-            s @ _ => panic!("State::handle_message: Must be connected in order to input to \
+            s => panic!("State::handle_message: Must be connected in order to input to \
                 honey badger. State: {}", s.discriminant()),
         }
         None

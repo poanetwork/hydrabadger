@@ -391,7 +391,7 @@ pub struct InternalMessage {
 
 impl InternalMessage {
     pub fn new(src_uid: Option<Uid>, src_addr: OutAddr, kind: InternalMessageKind) -> InternalMessage {
-        InternalMessage { src_uid: src_uid, src_addr, kind }
+        InternalMessage { src_uid, src_addr, kind }
     }
 
     /// Returns a new `InternalMessage` without a uid.

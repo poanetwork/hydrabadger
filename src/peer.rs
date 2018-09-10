@@ -142,7 +142,7 @@ impl Future for PeerHandler {
                             InternalMessage::hb_input(src_uid, self.out_addr, HbInput::User(txns))
                         )
                     },
-                    kind @ _ => {
+                    kind => {
                         self.hdb.send_internal(InternalMessage::wire(self.uid.clone(),
                             self.out_addr, kind.into()))
                     }

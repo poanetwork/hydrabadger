@@ -176,8 +176,7 @@ impl Hydrabadger {
 
     /// Returns a reference to the inner state.
     pub(crate) fn state(&self) -> RwLockReadGuard<State> {
-        let state = self.inner.state.read();
-        state
+        self.inner.state.read()
     }
 
     /// Returns a mutable reference to the inner state.
