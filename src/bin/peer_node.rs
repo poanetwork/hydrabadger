@@ -4,18 +4,18 @@ extern crate clap;
 extern crate env_logger;
 extern crate hydrabadger;
 extern crate chrono;
+extern crate rand;
+#[macro_use]
+extern crate serde_derive;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::collections::HashSet;
 use std::env;
 use std::io::Write;
+use rand::Rng;
 use chrono::Local;
 use clap::{App, Arg, ArgMatches};
 use hydrabadger::{Config, Hydrabadger, Blockchain, MiningError};
-// use hydrabadger::{TXN_BYTES, DEFAULT_TXN_GEN_INTERVAL, NEW_TXNS_PER_INTERVAL, EXTRA_DELAY_MS,
-//     BATCH_SIZE, config.keygen_peer_count};
-
-
 
 /// Returns parsed command line arguments.
 fn arg_matches<'a>() -> ArgMatches<'a> {
@@ -91,12 +91,21 @@ fn mine() -> Result<(), MiningError> {
     Ok(())
 }
 
+/// A transaction.
+#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd, Debug, Clone)]
+pub struct Transaction(pub Vec<u8>);
+
+impl Transaction {
+    fn random(len: usize) -> Transaction {
+        Transaction(rand::thread_rng().gen_iter().take(len).collect())
+    }
+}
 
 fn main() {
     env_logger::Builder::new()
         .format(|buf, record| {
             write!(buf,
-                "{} [{}] - HYDRABADGER: {}\n",
+                "{} [{}]: {}\n",
                 Local::now().format("%Y-%m-%dT%H:%M:%S"),
                 record.level(),
                 record.args()
@@ -152,7 +161,14 @@ fn main() {
     }
 
     let hb = Hydrabadger::new(bind_address, cfg);
-    hb.run_node(Some(remote_addresses));
+
+    let gen_txn = |txn_gen_count, txn_gen_bytes| {
+        (0..txn_gen_count).map(|_| {
+            Transaction::random(txn_gen_bytes)
+        }).collect::<Vec<_>>()
+    };
+
+    hb.run_node(Some(remote_addresses), Some(gen_txn));
 
     // match mine() {
     //     Ok(_) => {},

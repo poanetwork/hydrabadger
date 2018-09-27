@@ -13,6 +13,7 @@ use std::{
     collections::HashSet,
     net::{SocketAddr, ToSocketAddrs},
 };
+use serde::{Serialize, Deserialize};
 use futures::{
     sync::mpsc,
     future::{self, Either},
@@ -31,7 +32,7 @@ use hbbft::{
 };
 use peer::{PeerHandler, Peers};
 use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages,
-    OutAddr, InAddr,  Uid, InternalTx, Transaction};
+    OutAddr, InAddr,  Uid, InternalTx, Contribution};
 use super::{Error, State, StateDsct, Handler};
 
 
@@ -84,7 +85,7 @@ impl Default for Config {
 /// The `Arc` wrapped portion of `Hydrabadger`.
 ///
 /// Shared all over the place.
-struct Inner {
+struct Inner<T: Contribution> {
     /// Node uid:
     uid: Uid,
     /// Incoming connection socket.
@@ -93,16 +94,16 @@ struct Inner {
     /// This node's secret key.
     secret_key: SecretKey,
 
-    peers: RwLock<Peers>,
+    peers: RwLock<Peers<T>>,
 
     /// The current state containing HB when connected.
-    state: RwLock<State>,
+    state: RwLock<State<T>>,
 
     // TODO: Move this into a new state struct.
     state_dsct: AtomicUsize,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
-    peer_internal_tx: InternalTx,
+    peer_internal_tx: InternalTx<T>,
 
     config: Config,
 }
@@ -110,12 +111,12 @@ struct Inner {
 
 /// A `HoneyBadger` network node.
 #[derive(Clone)]
-pub struct Hydrabadger {
-    inner: Arc<Inner>,
-    handler: Arc<Mutex<Option<Handler>>>,
+pub struct Hydrabadger<T: Contribution> {
+    inner: Arc<Inner<T>>,
+    handler: Arc<Mutex<Option<Handler<T>>>>,
 }
 
-impl Hydrabadger {
+impl<T: Contribution> Hydrabadger<T> {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config) -> Self {
         use std::env;
@@ -170,17 +171,17 @@ impl Hydrabadger {
     }
 
     /// Returns the pre-created handler.
-    pub fn handler(&self) -> Option<Handler> {
+    pub fn handler(&self) -> Option<Handler<T>> {
         self.handler.lock().take()
     }
 
     /// Returns a reference to the inner state.
-    pub(crate) fn state(&self) -> RwLockReadGuard<State> {
+    pub(crate) fn state(&self) -> RwLockReadGuard<State<T>> {
         self.inner.state.read()
     }
 
     /// Returns a mutable reference to the inner state.
-    pub(crate) fn state_mut(&self) -> RwLockWriteGuard<State> {
+    pub(crate) fn state_mut(&self) -> RwLockWriteGuard<State<T>> {
         let state = self.inner.state.write();
         state
     }
@@ -202,12 +203,12 @@ impl Hydrabadger {
     }
 
     /// Returns a reference to the peers list.
-    pub(crate) fn peers(&self) -> RwLockReadGuard<Peers> {
+    pub(crate) fn peers(&self) -> RwLockReadGuard<Peers<T>> {
         self.inner.peers.read()
     }
 
     /// Returns a mutable reference to the peers list.
-    pub(crate) fn peers_mut(&self) -> RwLockWriteGuard<Peers> {
+    pub(crate) fn peers_mut(&self) -> RwLockWriteGuard<Peers<T>> {
         self.inner.peers.write()
     }
 
@@ -217,7 +218,7 @@ impl Hydrabadger {
     }
 
     /// Sends a message on the internal tx.
-    pub(crate) fn send_internal(&self, msg: InternalMessage) {
+    pub(crate) fn send_internal(&self, msg: InternalMessage<T>) {
         if let Err(err) = self.inner.peer_internal_tx.unbounded_send(msg) {
             error!("Unable to send on internal tx. Internal rx has dropped: {}", err);
             ::std::process::exit(-1)
@@ -305,7 +306,7 @@ impl Hydrabadger {
 
     /// Returns a future that generates random transactions and logs status
     /// messages.
-    fn generate_txns_status(self) -> impl Future<Item = (), Error = ()> {
+    fn generate_txns_status(self, gen_txn: fn(usize, usize) -> Vec<T>) -> impl Future<Item = (), Error = ()> {
         Interval::new(Instant::now(), Duration::from_millis(self.inner.config.txn_gen_interval))
             .for_each(move |_| {
                 let hdb = self.clone();
@@ -333,10 +334,13 @@ impl Hydrabadger {
                 match dsct {
                     StateDsct::Validator => {
                         info!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
+                        // // Send some random transactions to our internal HB instance.
+                        // let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
+                        //     Transaction::random(self.inner.config.txn_gen_bytes)
+                        // }).collect();
+
                         // Send some random transactions to our internal HB instance.
-                        let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
-                            Transaction::random(self.inner.config.txn_gen_bytes)
-                        }).collect();
+                        let txns = gen_txn(self.inner.config.txn_gen_count, self.inner.config.txn_gen_bytes);
 
                         hdb.send_internal(
                             InternalMessage::hb_input(hdb.inner.uid, OutAddr(*hdb.inner.addr), QhbInput::User(txns))
@@ -351,7 +355,7 @@ impl Hydrabadger {
     }
 
     /// Binds to a host address and returns a future which starts the node.
-    pub fn node(self, remotes: Option<HashSet<SocketAddr>>)
+    pub fn node(self, remotes: Option<HashSet<SocketAddr>>, gen_txn: Option<fn(usize, usize) -> Vec<T>>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
@@ -375,17 +379,24 @@ impl Hydrabadger {
             Ok(())
         });
 
-        let generate_txns_status = self.clone().generate_txns_status();
-
         let hdb_handler = self.handler()
             .map_err(|err| error!("Handler internal error: {:?}", err));
+
+        let generate_txns_status = match gen_txn {
+            Some(gen_txn) => {
+                Either::A(self.clone().generate_txns_status(gen_txn))
+            },
+            None => {
+                Either::B(future::ok(()))
+            }
+        };
 
         listen.join4(connect, generate_txns_status, hdb_handler).map(|(_, _, _, _)| ())
     }
 
     /// Starts a node.
-    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>) {
-        tokio::run(self.node(remotes));
+    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>, gen_txn: Option<fn(usize, usize) -> Vec<T>>) {
+        tokio::run(self.node(remotes, gen_txn));
     }
 
     pub fn addr(&self) -> &InAddr {

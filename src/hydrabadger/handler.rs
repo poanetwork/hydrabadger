@@ -8,6 +8,7 @@
     unreachable_code)]
 
 use std::collections::BTreeMap;
+use serde::{Serialize, Deserialize};
 use crossbeam::queue::SegQueue;
 use tokio::{
     self,
@@ -22,7 +23,8 @@ use hbbft::{
 };
 use peer::Peers;
 use ::{InternalMessage, InternalMessageKind, WireMessage, WireMessageKind,
-    OutAddr, InAddr, Uid, NetworkState, InternalRx, Step, Input, Message, NetworkNodeInfo};
+    OutAddr, InAddr, Uid, NetworkState, InternalRx, Step, Input, Message, NetworkNodeInfo,
+    Contribution};
 use super::{Hydrabadger, Error, State, StateDsct, InputOrMessage};
 use super::{WIRE_MESSAGE_RETRY_MAX};
 
@@ -30,18 +32,18 @@ use super::{WIRE_MESSAGE_RETRY_MAX};
 
 
 /// Hydrabadger event (internal message) handler.
-pub struct Handler {
-    hdb: Hydrabadger,
+pub struct Handler<T: Contribution> {
+    hdb: Hydrabadger<T>,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
-    peer_internal_rx: InternalRx,
+    peer_internal_rx: InternalRx<T>,
     // Outgoing wire message queue:
-    wire_queue: SegQueue<(Uid, WireMessage, usize)>,
+    wire_queue: SegQueue<(Uid, WireMessage<T>, usize)>,
     // Output from HoneyBadger:
-    step_queue: SegQueue<Step>,
+    step_queue: SegQueue<Step<T>>,
 }
 
-impl Handler {
-    pub(super) fn new(hdb: Hydrabadger, peer_internal_rx: InternalRx) -> Handler {
+impl<T: Contribution> Handler<T> {
+    pub(super) fn new(hdb: Hydrabadger<T>, peer_internal_rx: InternalRx<T>) -> Handler<T> {
          Handler {
             hdb,
             peer_internal_rx,
@@ -50,14 +52,14 @@ impl Handler {
         }
     }
 
-    fn wire_to_all(&self, msg: WireMessage, peers: &Peers) {
+    fn wire_to_all(&self, msg: WireMessage<T>, peers: &Peers<T>) {
         for (_p_addr, peer) in peers.iter()
                 .filter(|(&p_addr, _)| p_addr != OutAddr(self.hdb.addr().0)) {
             peer.tx().unbounded_send(msg.clone()).unwrap();
         }
     }
 
-    fn wire_to_validators(&self, msg: WireMessage, peers: &Peers) {
+    fn wire_to_validators(&self, msg: WireMessage<T>, peers: &Peers<T>) {
         // for peer in peers.validators()
         //         .filter(|p| p.out_addr() != &OutAddr(self.hdb.addr().0)) {
         //     peer.tx().unbounded_send(msg.clone()).unwrap();
@@ -68,7 +70,7 @@ impl Handler {
     }
 
     // `tar_uid` of `None` sends to all peers.
-    fn wire_to(&self, tar_uid: Uid, msg: WireMessage, retry_count: usize, peers: &Peers) {
+    fn wire_to(&self, tar_uid: Uid, msg: WireMessage<T>, retry_count: usize, peers: &Peers<T>) {
         match peers.get_by_uid(&tar_uid) {
             Some(p) => p.tx().unbounded_send(msg).unwrap(),
             None => {
@@ -80,7 +82,7 @@ impl Handler {
     }
 
     fn handle_new_established_peer(&self, src_uid: Uid, _src_addr: OutAddr, src_pk: PublicKey,
-             request_change_add: bool, state: &mut State, peers: &Peers) -> Result<(), Error> {
+             request_change_add: bool, state: &mut State<T>, peers: &Peers<T>) -> Result<(), Error> {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
                 // panic!("hydrabadger::Handler::handle_new_established_peer: \
@@ -134,7 +136,7 @@ impl Handler {
         Ok(())
     }
 
-    fn handle_input(&self, input: Input, state: &mut State) -> Result<(), Error> {
+    fn handle_input(&self, input: Input<T>, state: &mut State<T>) -> Result<(), Error> {
         // match &input {
         //     QhbInput::User(_contrib) => {},
         //     QhbInput::Change(ref qhb_change) => match qhb_change {
@@ -159,7 +161,7 @@ impl Handler {
         Ok(())
     }
 
-    fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State) -> Result <(), Error> {
+    fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State<T>) -> Result <(), Error> {
         trace!("hydrabadger::Handler: HB_MESSAGE: {:?}", msg);
         // match &msg {
         //     // A message belonging to the `HoneyBadger` algorithm started in
@@ -208,7 +210,7 @@ impl Handler {
         }
     }
 
-    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State) {
+    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut State<T>) {
         match state {
             State::GeneratingKeys { ref mut sync_key_gen, ref ack_queue, ref mut part_count,
                     ref mut ack_count, .. } => {
@@ -252,7 +254,7 @@ impl Handler {
         }
     }
 
-    fn handle_key_gen_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State, peers: &Peers)
+    fn handle_key_gen_ack(&self, src_uid: &Uid, ack: Ack, state: &mut State<T>, peers: &Peers<T>)
             -> Result<(), Error> {
         let mut keygen_is_complete = false;
         match state {
@@ -292,7 +294,7 @@ impl Handler {
 
     // This may be called spuriously and only need be handled by
     // 'unestablished' nodes.
-    fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State, peers: &Peers)
+    fn handle_join_plan(&self, jp: JoinPlan<Uid>, state: &mut State<T>, peers: &Peers<T>)
             -> Result<(), Error> {
         debug!("Join plan: \n{:?}", jp);
 
@@ -317,7 +319,7 @@ impl Handler {
     fn instantiate_hb(&self,
             // net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
             jp_opt: Option<JoinPlan<Uid>>,
-            state: &mut State, peers: &Peers) -> Result<(), Error> {
+            state: &mut State<T>, peers: &Peers<T>) -> Result<(), Error> {
         let mut iom_queue_opt = None;
 
         match state.discriminant() {
@@ -370,7 +372,7 @@ impl Handler {
         Ok(())
     }
 
-    fn handle_net_state(&self, net_state: NetworkState, state: &mut State, peers: &Peers)
+    fn handle_net_state(&self, net_state: NetworkState, state: &mut State<T>, peers: &Peers<T>)
             -> Result<(), Error> {
         let peer_infos;
         match net_state {
@@ -427,7 +429,7 @@ impl Handler {
         Ok(())
     }
 
-    fn handle_peer_disconnect(&self, src_uid: Uid, state: &mut State, peers: &Peers)
+    fn handle_peer_disconnect(&self, src_uid: Uid, state: &mut State<T>, peers: &Peers<T>)
             -> Result<(), Error> {
         // self.hdb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
         //     .expect("Error adding new peer to HB");
@@ -469,7 +471,7 @@ impl Handler {
         Ok(())
     }
 
-    fn handle_internal_message(&self, i_msg: InternalMessage, state: &mut State)
+    fn handle_internal_message(&self, i_msg: InternalMessage<T>, state: &mut State<T>)
             -> Result<(), Error> {
         let (src_uid, src_out_addr, w_msg) = i_msg.into_parts();
 
@@ -615,7 +617,7 @@ impl Handler {
     }
 }
 
-impl Future for Handler {
+impl<T: Contribution> Future for Handler<T> {
     type Item = ();
     type Error = Error;
 

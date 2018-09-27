@@ -19,7 +19,7 @@ use hbbft::{
 
 };
 use peer::Peers;
-use ::{Uid, NetworkState, NetworkNodeInfo, Message, Transaction, Step, Input};
+use ::{Uid, NetworkState, NetworkNodeInfo, Message, Step, Input, Contribution};
 use super::{InputOrMessage, Error, Config};
 // use super::{BATCH_SIZE, config.keygen_peer_count};
 
@@ -74,18 +74,18 @@ impl From<usize> for StateDsct {
 // TODO: Make this into a struct and move the `state_dsct: AtomicUsize` field
 // into it.
 //
-pub(crate) enum State {
+pub(crate) enum State<T: Contribution> {
     Disconnected { },
     DeterminingNetworkState {
         ack_queue: Option<SegQueue<(Uid, Ack)>>,
-        iom_queue: Option<SegQueue<InputOrMessage>>,
+        iom_queue: Option<SegQueue<InputOrMessage<T>>>,
         network_state: Option<NetworkState>,
     },
     AwaitingMorePeersForKeyGeneration {
         // Queued input to HoneyBadger:
         // FIXME: ACTUALLY USE THIS QUEUED INPUT!
         ack_queue: Option<SegQueue<(Uid, Ack)>>,
-        iom_queue: Option<SegQueue<InputOrMessage>>,
+        iom_queue: Option<SegQueue<InputOrMessage<T>>>,
     },
     GeneratingKeys {
         sync_key_gen: Option<SyncKeyGen<Uid>>,
@@ -97,17 +97,17 @@ pub(crate) enum State {
         ack_count: usize,
 
         // Queued input to HoneyBadger:
-        iom_queue: Option<SegQueue<InputOrMessage>>,
+        iom_queue: Option<SegQueue<InputOrMessage<T>>>,
     },
     Observer {
-        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
+        qhb: Option<QueueingHoneyBadger<Vec<T>, Uid>>,
     },
     Validator {
-        qhb: Option<QueueingHoneyBadger<Vec<Transaction>, Uid>>,
+        qhb: Option<QueueingHoneyBadger<Vec<T>, Uid>>,
     },
 }
 
-impl State {
+impl<T: Contribution> State<T> {
     /// Returns the state discriminant.
     pub(super) fn discriminant(&self) -> StateDsct {
         match self {
@@ -123,7 +123,7 @@ impl State {
 
     /// Returns a new `State::Disconnected`.
     pub(super) fn disconnected(/*local_uid: Uid, local_addr: InAddr,*/ /*secret_key: SecretKey*/)
-            -> State {
+            -> State<T> {
         State::Disconnected { /*secret_key: secret_key*/ }
     }
 
@@ -169,7 +169,7 @@ impl State {
     }
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
-    pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers,
+    pub(super) fn set_generating_keys(&mut self, local_uid: &Uid, local_sk: SecretKey, peers: &Peers<T>,
             config: &Config) -> Result<(Part, Ack), Error> {
         let (part, ack);
         *self = match self {
@@ -227,8 +227,8 @@ impl State {
     // TODO: Add proper error handling:
     #[must_use]
     pub(super) fn set_observer(&mut self, local_uid: Uid, local_sk: SecretKey,
-            jp: JoinPlan<Uid>, cfg: &Config, step_queue: &SegQueue<Step>)
-            -> Result<SegQueue<InputOrMessage>, Error> {
+            jp: JoinPlan<Uid>, cfg: &Config, step_queue: &SegQueue<Step<T>>)
+            -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::DeterminingNetworkState { ref mut iom_queue, .. } => {
@@ -271,9 +271,9 @@ impl State {
     //
     // TODO: Add proper error handling:
     #[must_use]
-    pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers,
-            cfg: &Config, step_queue: &SegQueue<Step>)
-            -> Result<SegQueue<InputOrMessage>, Error> {
+    pub(super) fn set_validator(&mut self, local_uid: Uid, local_sk: SecretKey, peers: &Peers<T>,
+            cfg: &Config, step_queue: &SegQueue<Step<T>>)
+            -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
         *self = match self {
             State::GeneratingKeys { ref mut sync_key_gen, mut public_key,
@@ -350,7 +350,7 @@ impl State {
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does
     /// nothing.
-    pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers) {
+    pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers<T>) {
         let _dsct = self.discriminant();
         *self = match self {
             State::Disconnected { } => {
@@ -366,7 +366,7 @@ impl State {
     }
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
-    pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers) {
+    pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers<T>) {
         *self = match self {
             State::DeterminingNetworkState { .. } => {
                 if peers.count_total() == 0 {
@@ -400,7 +400,7 @@ impl State {
     }
 
     /// Returns the network state, if possible.
-    pub(super) fn network_state(&self, peers: &Peers) -> NetworkState {
+    pub(super) fn network_state(&self, peers: &Peers<T>) -> NetworkState {
         let peer_infos = peers.peers().filter_map(|peer| {
             peer.pub_info().map(|(&uid, &in_addr, &pk)| {
                 NetworkNodeInfo { uid, in_addr, pk }
@@ -424,7 +424,7 @@ impl State {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<Transaction>, Uid>> {
+    pub(super) fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<T>, Uid>> {
         match self {
             State::Observer { ref qhb, .. } => qhb.as_ref(),
             State::Validator { ref qhb, .. } => qhb.as_ref(),
@@ -433,7 +433,7 @@ impl State {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<Transaction>, Uid>> {
+    pub(super) fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<T>, Uid>> {
         match self {
             State::Observer { ref mut qhb, .. } => qhb.as_mut(),
             State::Validator { ref mut qhb, .. } => qhb.as_mut(),
@@ -444,7 +444,7 @@ impl State {
     /// Presents input to HoneyBadger or queues it for later.
     ///
     /// Cannot be called while disconnected or connection-pending.
-    pub(super) fn input(&mut self, input: Input) -> Option<Result<Step, QhbError>> {
+    pub(super) fn input(&mut self, input: Input<T>) -> Option<Result<Step<T>, QhbError>> {
         match self {
             State::Observer { ref mut qhb, .. } | State::Validator { ref mut qhb, .. } => {
                 trace!("State::input: Inputting: {:?}", input);
@@ -476,7 +476,7 @@ impl State {
     ///
     /// Cannot be called while disconnected or connection-pending.
     pub(super) fn handle_message(&mut self, src_uid: &Uid, msg: Message)
-            -> Option<Result<Step, QhbError>> {
+            -> Option<Result<Step<T>, QhbError>> {
         match self {
             | State::Observer { ref mut qhb, .. }
             | State::Validator { ref mut qhb, .. } => {

@@ -9,40 +9,42 @@ use std::{
     },
     borrow::Borrow,
 };
+use serde::{Serialize, Deserialize};
 use futures::sync::mpsc;
 use tokio::prelude::*;
 use hbbft::crypto::PublicKey;
-use hbbft::queueing_honey_badger::{Input as HbInput};
+use hbbft::{
+    queueing_honey_badger::{Input as HbInput},
+};
 use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
-    OutAddr, InAddr, Uid};
+    OutAddr, InAddr, Uid, Contribution};
 use hydrabadger::{Hydrabadger, Error,};
 
-
 /// The state for each connected client.
-pub struct PeerHandler {
+pub struct PeerHandler<T: Contribution> {
     // Peer uid.
     uid: Option<Uid>,
 
     // The incoming stream of messages:
-    wire_msgs: WireMessages,
+    wire_msgs: WireMessages<T>,
 
     /// Handle to the shared message state.
-    hdb: Hydrabadger,
+    hdb: Hydrabadger<T>,
 
     // TODO: Consider adding back a separate clone of `peer_internal_tx`. Is
     // there any difference if capacity isn't an issue? -- doubtful
 
     /// Receive half of the message channel.
-    rx: WireRx,
+    rx: WireRx<T>,
 
     /// Peer socket address.
     out_addr: OutAddr,
 }
 
-impl PeerHandler {
+impl<T: Contribution> PeerHandler<T> {
     /// Create a new instance of `Peer`.
     pub fn new(pub_info: Option<(Uid, InAddr, PublicKey)>,
-            hdb: Hydrabadger, wire_msgs: WireMessages) -> PeerHandler {
+            hdb: Hydrabadger<T>, wire_msgs: WireMessages<T>) -> PeerHandler<T> {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
 
@@ -63,7 +65,7 @@ impl PeerHandler {
         }
     }
 
-    pub(crate) fn hdb(&self) -> &Hydrabadger {
+    pub(crate) fn hdb(&self) -> &Hydrabadger<T> {
         &self.hdb
     }
 
@@ -73,7 +75,7 @@ impl PeerHandler {
 }
 
 /// A future representing the client connection.
-impl Future for PeerHandler {
+impl<T: Contribution> Future for PeerHandler<T> {
     type Item = ();
     type Error = Error;
 
@@ -164,7 +166,7 @@ impl Future for PeerHandler {
     }
 }
 
-impl Drop for PeerHandler {
+impl<T: Contribution> Drop for PeerHandler<T> {
     fn drop(&mut self) {
         debug!("Removing peer ({}: '{}') from the list of peers.",
             self.out_addr, self.uid.clone().unwrap());
@@ -206,18 +208,18 @@ enum State {
 
 /// Nodes of the network.
 #[derive(Clone, Debug)]
-pub struct Peer {
+pub struct Peer<T: Contribution> {
     out_addr: OutAddr,
-    tx: WireTx,
+    tx: WireTx<T>,
     state: State,
 }
 
-impl Peer {
+impl<T: Contribution> Peer<T> {
     /// Returns a new `Peer`
-    fn new(out_addr: OutAddr, tx: WireTx,
+    fn new(out_addr: OutAddr, tx: WireTx<T>,
             // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
             pub_info: Option<(Uid, InAddr, PublicKey)>,
-            ) -> Peer {
+            ) -> Peer<T> {
         // assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
         let state = match pub_info {
             None => State::Handshaking,
@@ -363,7 +365,7 @@ impl Peer {
     }
 
     /// Returns the peer's wire transmitter.
-    pub fn tx(&self) -> &WireTx {
+    pub fn tx(&self) -> &WireTx<T> {
         &self.tx
     }
 }
@@ -374,14 +376,14 @@ impl Peer {
 // TODO: Keep a separate `HashSet` of validator `OutAddrs` to avoid having to
 // iterate through entire list.
 #[derive(Debug)]
-pub(crate) struct Peers {
-    peers: HashMap<OutAddr, Peer>,
+pub(crate) struct Peers<T: Contribution> {
+    peers: HashMap<OutAddr, Peer<T>>,
     out_addrs: HashMap<Uid, OutAddr>,
 }
 
-impl Peers {
+impl<T: Contribution> Peers<T> {
     /// Returns a new empty list of peers.
-    pub(crate) fn new() -> Peers {
+    pub(crate) fn new() -> Peers<T> {
         Peers {
             peers: HashMap::with_capacity(64),
             out_addrs: HashMap::with_capacity(64),
@@ -389,7 +391,7 @@ impl Peers {
     }
 
     /// Adds a peer to the list.
-    pub(crate) fn add(&mut self, out_addr: OutAddr, tx: WireTx,
+    pub(crate) fn add(&mut self, out_addr: OutAddr, tx: WireTx<T>,
             // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
             pub_info: Option<(Uid, InAddr, PublicKey)>,
             ) {
@@ -482,27 +484,27 @@ impl Peers {
         }
     }
 
-    pub(crate) fn get<O: Borrow<OutAddr>>(&self, out_addr: O) -> Option<&Peer> {
+    pub(crate) fn get<O: Borrow<OutAddr>>(&self, out_addr: O) -> Option<&Peer<T>> {
         self.peers.get(out_addr.borrow())
     }
 
-    pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer> {
+    pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer<T>> {
         // self.peers.get()
         self.out_addrs.get(uid.borrow()).and_then(|addr| self.get(addr))
     }
 
     /// Returns an Iterator over the list of peers.
-    pub(crate) fn iter(&self) -> HashMapIter<OutAddr, Peer> {
+    pub(crate) fn iter(&self) -> HashMapIter<OutAddr, Peer<T>> {
         self.peers.iter()
     }
 
     /// Returns an Iterator over the list of peers.
-    pub(crate) fn peers(&self) -> HashMapValues<OutAddr, Peer> {
+    pub(crate) fn peers(&self) -> HashMapValues<OutAddr, Peer<T>> {
         self.peers.values()
     }
 
     /// Returns an iterator over the list of validators.
-    pub(crate) fn validators(&self) -> impl Iterator<Item = &Peer> {
+    pub(crate) fn validators(&self) -> impl Iterator<Item = &Peer<T>> {
         self.peers.values().filter(|p| p.is_validator())
     }
 
