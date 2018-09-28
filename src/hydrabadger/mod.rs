@@ -1,23 +1,21 @@
-mod state;
 mod handler;
 mod hydrabadger;
+mod state;
 
-use std;
+use self::handler::Handler;
+use self::state::{State, StateDsct};
 use bincode;
 use hbbft::{
-    dynamic_honey_badger::{Error as DhbError},
-    queueing_honey_badger::{Error as QhbError},
-    sync_key_gen::{Error as SyncKeyGenError},
+    dynamic_honey_badger::Error as DhbError, queueing_honey_badger::Error as QhbError,
+    sync_key_gen::Error as SyncKeyGenError,
 };
-use ::{Message, Input, Uid};
-use self::state::{State, StateDsct};
-use self::handler::{Handler};
+use std;
+use {Input, Message, Uid};
 
-pub use self::hydrabadger::{Hydrabadger, Config};
+pub use self::hydrabadger::{Config, Hydrabadger};
 
 // Number of times to attempt wire message re-send.
 pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
-
 
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
@@ -25,7 +23,6 @@ pub(crate) enum InputOrMessage<T> {
     Input(Input<T>),
     Message(Uid, Message),
 }
-
 
 #[derive(Debug, Fail)]
 pub enum Error {
@@ -72,4 +69,3 @@ impl From<DhbError> for Error {
         Error::Dhb(())
     }
 }
-

@@ -2,23 +2,23 @@
 
 #![allow(unused_imports, dead_code, unused_variables, unused_mut)]
 
+use futures::sync::mpsc;
+use hbbft::crypto::PublicKey;
+use hbbft::queueing_honey_badger::Input as HbInput;
+use hydrabadger::{Error, Hydrabadger};
+use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Borrow,
     collections::{
         hash_map::{Iter as HashMapIter, Values as HashMapValues},
         HashMap,
     },
-    borrow::Borrow,
 };
-use serde::{Serialize, Deserialize};
-use futures::sync::mpsc;
 use tokio::prelude::*;
-use hbbft::crypto::PublicKey;
-use hbbft::{
-    queueing_honey_badger::{Input as HbInput},
+use {
+    Contribution, InAddr, InternalMessage, OutAddr, Uid, WireMessage, WireMessageKind,
+    WireMessages, WireRx, WireTx,
 };
-use ::{InternalMessage, WireMessage, WireMessageKind, WireMessages, WireTx, WireRx,
-    OutAddr, InAddr, Uid, Contribution};
-use hydrabadger::{Hydrabadger, Error,};
 
 /// The state for each connected client.
 pub struct PeerHandler<T: Contribution> {
@@ -33,7 +33,6 @@ pub struct PeerHandler<T: Contribution> {
 
     // TODO: Consider adding back a separate clone of `peer_internal_tx`. Is
     // there any difference if capacity isn't an issue? -- doubtful
-
     /// Receive half of the message channel.
     rx: WireRx<T>,
 
@@ -43,8 +42,11 @@ pub struct PeerHandler<T: Contribution> {
 
 impl<T: Contribution> PeerHandler<T> {
     /// Create a new instance of `Peer`.
-    pub fn new(pub_info: Option<(Uid, InAddr, PublicKey)>,
-            hdb: Hydrabadger<T>, wire_msgs: WireMessages<T>) -> PeerHandler<T> {
+    pub fn new(
+        pub_info: Option<(Uid, InAddr, PublicKey)>,
+        hdb: Hydrabadger<T>,
+        wire_msgs: WireMessages<T>,
+    ) -> PeerHandler<T> {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
 
@@ -111,17 +113,20 @@ impl<T: Contribution> Future for PeerHandler<T> {
             if let Some(msg) = message {
                 match msg.into_kind() {
                     WireMessageKind::HelloRequestChangeAdd(src_uid, _in_addr, _pub_key) => {
-                        error!("Duplicate `WireMessage::HelloRequestChangeAdd` \
-                            received from '{}'", src_uid);
-                    },
+                        error!(
+                            "Duplicate `WireMessage::HelloRequestChangeAdd` \
+                             received from '{}'",
+                            src_uid
+                        );
+                    }
                     WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) => {
                         self.uid = Some(src_uid);
-                        self.hdb.send_internal(
-                            InternalMessage::wire(Some(src_uid), self.out_addr,
-                                WireMessage::welcome_received_change_add(src_uid, pk, net_state)
-                            )
-                        );
-                    },
+                        self.hdb.send_internal(InternalMessage::wire(
+                            Some(src_uid),
+                            self.out_addr,
+                            WireMessage::welcome_received_change_add(src_uid, pk, net_state),
+                        ));
+                    }
                     WireMessageKind::Message(src_uid, msg) => {
                         // let uid = self.uid.clone()
                         //     .expect("`WireMessageKind::Message` received before \
@@ -131,23 +136,28 @@ impl<T: Contribution> Future for PeerHandler<T> {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
 
-                        self.hdb.send_internal(
-                            InternalMessage::hb_message(src_uid, self.out_addr, msg)
-                        )
-                    },
+                        self.hdb.send_internal(InternalMessage::hb_message(
+                            src_uid,
+                            self.out_addr,
+                            msg,
+                        ))
+                    }
                     WireMessageKind::Transactions(src_uid, txns) => {
                         if let Some(peer_uid) = self.uid.as_ref() {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
 
-                        self.hdb.send_internal(
-                            InternalMessage::hb_input(src_uid, self.out_addr, HbInput::User(txns))
-                        )
-                    },
-                    kind => {
-                        self.hdb.send_internal(InternalMessage::wire(self.uid.clone(),
-                            self.out_addr, kind.into()))
+                        self.hdb.send_internal(InternalMessage::hb_input(
+                            src_uid,
+                            self.out_addr,
+                            HbInput::User(txns),
+                        ))
                     }
+                    kind => self.hdb.send_internal(InternalMessage::wire(
+                        self.uid.clone(),
+                        self.out_addr,
+                        kind.into(),
+                    )),
                 }
             } else {
                 // EOF was reached. The remote client has disconnected. There is
@@ -168,21 +178,26 @@ impl<T: Contribution> Future for PeerHandler<T> {
 
 impl<T: Contribution> Drop for PeerHandler<T> {
     fn drop(&mut self) {
-        debug!("Removing peer ({}: '{}') from the list of peers.",
-            self.out_addr, self.uid.clone().unwrap());
+        debug!(
+            "Removing peer ({}: '{}') from the list of peers.",
+            self.out_addr,
+            self.uid.clone().unwrap()
+        );
         // Remove peer transmitter from the lists:
         self.hdb.peers_mut().remove(&self.out_addr);
 
         if let Some(uid) = self.uid.clone() {
-            debug!("Sending peer ({}: '{}') disconnect internal message.",
-                self.out_addr, self.uid.clone().unwrap());
+            debug!(
+                "Sending peer ({}: '{}') disconnect internal message.",
+                self.out_addr,
+                self.uid.clone().unwrap()
+            );
 
-            self.hdb.send_internal(InternalMessage::peer_disconnect(
-                uid, self.out_addr));
+            self.hdb
+                .send_internal(InternalMessage::peer_disconnect(uid, self.out_addr));
         }
     }
 }
-
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -205,7 +220,6 @@ enum State {
     },
 }
 
-
 /// Nodes of the network.
 #[derive(Clone, Debug)]
 pub struct Peer<T: Contribution> {
@@ -216,10 +230,12 @@ pub struct Peer<T: Contribution> {
 
 impl<T: Contribution> Peer<T> {
     /// Returns a new `Peer`
-    fn new(out_addr: OutAddr, tx: WireTx<T>,
-            // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
-            pub_info: Option<(Uid, InAddr, PublicKey)>,
-            ) -> Peer<T> {
+    fn new(
+        out_addr: OutAddr,
+        tx: WireTx<T>,
+        // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+        pub_info: Option<(Uid, InAddr, PublicKey)>,
+    ) -> Peer<T> {
         // assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
         let state = match pub_info {
             None => State::Handshaking,
@@ -236,15 +252,15 @@ impl<T: Contribution> Peer<T> {
     /// Sets a peer state to `State::PendingJoinInfo` and stores public info.
     fn set_pending(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
         self.state = match self.state {
-            State::Handshaking => {
-                State::PendingJoinInfo {
-                    uid: pub_info.0,
-                    in_addr: pub_info.1,
-                    pk: pub_info.2
-                }
+            State::Handshaking => State::PendingJoinInfo {
+                uid: pub_info.0,
+                in_addr: pub_info.1,
+                pk: pub_info.2,
             },
-            _ => panic!("Peer::set_pending: Can only set pending when \
-                peer state is `Handshaking`."),
+            _ => panic!(
+                "Peer::set_pending: Can only set pending when \
+                 peer state is `Handshaking`."
+            ),
         };
     }
 
@@ -252,14 +268,12 @@ impl<T: Contribution> Peer<T> {
     fn establish_observer(&mut self) {
         self.state = match self.state {
             State::PendingJoinInfo { uid, in_addr, pk } => {
-                State::EstablishedObserver {
-                    uid,
-                    in_addr,
-                    pk,
-                }
-            },
-            _ => panic!("Peer::establish_observer: Can only establish observer when \
-                peer state is`PendingJoinInfo`."),
+                State::EstablishedObserver { uid, in_addr, pk }
+            }
+            _ => panic!(
+                "Peer::establish_observer: Can only establish observer when \
+                 peer state is`PendingJoinInfo`."
+            ),
         };
     }
 
@@ -267,31 +281,31 @@ impl<T: Contribution> Peer<T> {
     fn establish_validator(&mut self, pub_info: Option<(Uid, InAddr, PublicKey)>) {
         self.state = match self.state {
             State::Handshaking => match pub_info {
-                Some(pi) => {
-                    State::EstablishedValidator {
-                        uid: pi.0,
-                        in_addr: pi.1,
-                        pk: pi.2
-                    }
+                Some(pi) => State::EstablishedValidator {
+                    uid: pi.0,
+                    in_addr: pi.1,
+                    pk: pi.2,
                 },
                 None => {
-                    panic!("Peer::establish_validator: `pub_info` must be supplied \
-                        when establishing a validator from `Handshaking`.");
-                },
+                    panic!(
+                        "Peer::establish_validator: `pub_info` must be supplied \
+                         when establishing a validator from `Handshaking`."
+                    );
+                }
             },
             State::EstablishedObserver { uid, in_addr, pk } => {
                 if let Some(_) = pub_info {
-                    panic!("Peer::establish_validator: `pub_info` must be `None` \
-                        when upgrading an observer node.");
+                    panic!(
+                        "Peer::establish_validator: `pub_info` must be `None` \
+                         when upgrading an observer node."
+                    );
                 }
-                State::EstablishedValidator {
-                    uid,
-                    in_addr,
-                    pk,
-                }
-            },
-            _ => panic!("Peer::establish_validator: Can only establish validator when \
-                peer state is`Handshaking` or `EstablishedObserver`."),
+                State::EstablishedValidator { uid, in_addr, pk }
+            }
+            _ => panic!(
+                "Peer::establish_validator: Can only establish validator when \
+                 peer state is`Handshaking` or `EstablishedObserver`."
+            ),
         };
     }
 
@@ -300,7 +314,7 @@ impl<T: Contribution> Peer<T> {
         match self.state {
             State::Handshaking => None,
             State::PendingJoinInfo { ref uid, .. } => Some(uid),
-            State::EstablishedObserver { ref uid, ..  } => Some(uid),
+            State::EstablishedObserver { ref uid, .. } => Some(uid),
             State::EstablishedValidator { ref uid, .. } => Some(uid),
         }
     }
@@ -334,9 +348,21 @@ impl<T: Contribution> Peer<T> {
     pub fn pub_info(&self) -> Option<(&Uid, &InAddr, &PublicKey)> {
         match self.state {
             State::Handshaking => None,
-            State::EstablishedObserver { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
-            State::PendingJoinInfo { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
-            State::EstablishedValidator { ref uid, ref in_addr, ref pk } => Some((uid, in_addr, pk)),
+            State::EstablishedObserver {
+                ref uid,
+                ref in_addr,
+                ref pk,
+            } => Some((uid, in_addr, pk)),
+            State::PendingJoinInfo {
+                ref uid,
+                ref in_addr,
+                ref pk,
+            } => Some((uid, in_addr, pk)),
+            State::EstablishedValidator {
+                ref uid,
+                ref in_addr,
+                ref pk,
+            } => Some((uid, in_addr, pk)),
         }
     }
 
@@ -370,7 +396,6 @@ impl<T: Contribution> Peer<T> {
     }
 }
 
-
 /// Peer nodes of the network.
 //
 // TODO: Keep a separate `HashSet` of validator `OutAddrs` to avoid having to
@@ -391,10 +416,13 @@ impl<T: Contribution> Peers<T> {
     }
 
     /// Adds a peer to the list.
-    pub(crate) fn add(&mut self, out_addr: OutAddr, tx: WireTx<T>,
-            // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
-            pub_info: Option<(Uid, InAddr, PublicKey)>,
-            ) {
+    pub(crate) fn add(
+        &mut self,
+        out_addr: OutAddr,
+        tx: WireTx<T>,
+        // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
+        pub_info: Option<(Uid, InAddr, PublicKey)>,
+    ) {
         let peer = Peer::new(out_addr, tx, pub_info);
         if let State::EstablishedValidator { uid, .. } = peer.state {
             self.out_addrs.insert(uid, peer.out_addr);
@@ -411,19 +439,27 @@ impl<T: Contribution> Peers<T> {
     /// Peer state must be `Handshaking`.
     ///
     /// TODO: Error handling...
-    pub(crate) fn set_pending<O: Borrow<OutAddr>>(&mut self, out_addr: O,
-            pub_info: (Uid, InAddr, PublicKey)) -> bool {
-        let peer = self.peers.get_mut(out_addr.borrow())
-            .expect(&format!("Peers::set_pending: \
-                No peer found with outgoing address: {}", out_addr.borrow()));
+    pub(crate) fn set_pending<O: Borrow<OutAddr>>(
+        &mut self,
+        out_addr: O,
+        pub_info: (Uid, InAddr, PublicKey),
+    ) -> bool {
+        let peer = self.peers.get_mut(out_addr.borrow()).expect(&format!(
+            "Peers::set_pending: \
+             No peer found with outgoing address: {}",
+            out_addr.borrow()
+        ));
         match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
             Some(_out_addr_pub) => {
-                let pi_pub = peer.pub_info()
+                let pi_pub = peer
+                    .pub_info()
                     .expect("Peers::set_pending: internal consistency error");
-                assert!(pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2);
+                assert!(
+                    pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2
+                );
                 assert!(peer.is_validator());
                 return true;
-            },
+            }
             None => peer.set_pending(pub_info),
         }
 
@@ -439,9 +475,11 @@ impl<T: Contribution> Peers<T> {
     ///
     /// TODO: Error handling...
     pub(crate) fn establish_observer<O: Borrow<OutAddr>>(&mut self, out_addr: O) {
-        let peer = self.peers.get_mut(out_addr.borrow())
-            .expect(&format!("Peers::establish_observer: \
-                No peer found with outgoing address: {}", out_addr.borrow()));
+        let peer = self.peers.get_mut(out_addr.borrow()).expect(&format!(
+            "Peers::establish_observer: \
+             No peer found with outgoing address: {}",
+            out_addr.borrow()
+        ));
 
         // peer.establish_observer()
         panic!("Peer::set_pending: Do not use yet.");
@@ -456,19 +494,27 @@ impl<T: Contribution> Peers<T> {
     /// Peer state must be `Handshaking` or `EstablishedObserver`.
     ///
     /// TODO: Error handling...
-    pub(crate) fn establish_validator<O: Borrow<OutAddr>>(&mut self, out_addr: O,
-            pub_info: (Uid, InAddr, PublicKey)) -> bool {
-        let peer = self.peers.get_mut(out_addr.borrow())
-            .expect(&format!("Peers::establish_validator: \
-                No peer found with outgoing address: {}", out_addr.borrow()));
+    pub(crate) fn establish_validator<O: Borrow<OutAddr>>(
+        &mut self,
+        out_addr: O,
+        pub_info: (Uid, InAddr, PublicKey),
+    ) -> bool {
+        let peer = self.peers.get_mut(out_addr.borrow()).expect(&format!(
+            "Peers::establish_validator: \
+             No peer found with outgoing address: {}",
+            out_addr.borrow()
+        ));
         match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
             Some(_out_addr_pub) => {
-                let pi_pub = peer.pub_info()
+                let pi_pub = peer
+                    .pub_info()
                     .expect("Peers::establish_validator: internal consistency error");
-                assert!(pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2);
+                assert!(
+                    pub_info.0 == *pi_pub.0 && pub_info.1 == *pi_pub.1 && pub_info.2 == *pi_pub.2
+                );
                 assert!(peer.is_validator());
                 return true;
-            },
+            }
             None => peer.establish_validator(Some(pub_info)),
         }
         false
@@ -490,7 +536,9 @@ impl<T: Contribution> Peers<T> {
 
     pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer<T>> {
         // self.peers.get()
-        self.out_addrs.get(uid.borrow()).and_then(|addr| self.get(addr))
+        self.out_addrs
+            .get(uid.borrow())
+            .and_then(|addr| self.get(addr))
     }
 
     /// Returns an Iterator over the list of peers.

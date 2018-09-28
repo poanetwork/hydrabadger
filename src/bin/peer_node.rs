@@ -1,21 +1,21 @@
 #![allow(unused_imports, dead_code, unused_variables)]
 
+extern crate chrono;
 extern crate clap;
 extern crate env_logger;
 extern crate hydrabadger;
-extern crate chrono;
 extern crate rand;
 #[macro_use]
 extern crate serde_derive;
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use chrono::Local;
+use clap::{App, Arg, ArgMatches};
+use hydrabadger::{Blockchain, Config, Hydrabadger, MiningError};
+use rand::Rng;
 use std::collections::HashSet;
 use std::env;
 use std::io::Write;
-use rand::Rng;
-use chrono::Local;
-use clap::{App, Arg, ArgMatches};
-use hydrabadger::{Config, Hydrabadger, Blockchain, MiningError};
+use std::net::{SocketAddr, ToSocketAddrs};
 
 /// Returns parsed command line arguments.
 fn arg_matches<'a>() -> ArgMatches<'a> {
@@ -104,7 +104,8 @@ impl Transaction {
 fn main() {
     env_logger::Builder::new()
         .format(|buf, record| {
-            write!(buf,
+            write!(
+                buf,
                 "{} [{}]: {}\n",
                 Local::now().format("%Y-%m-%dT%H:%M:%S"),
                 record.level(),
@@ -112,20 +113,23 @@ fn main() {
             )
         })
         .parse(&env::var("HYDRABADGER_LOG").unwrap_or_default())
-        .try_init().ok();
+        .try_init()
+        .ok();
 
     let matches = arg_matches();
-    let bind_address: SocketAddr = matches.value_of("bind-address")
+    let bind_address: SocketAddr = matches
+        .value_of("bind-address")
         // TODO: Consider providing a default (and add to help info above).
         .expect("No bind address provided")
         // .unwrap_or("localhost::3070")
         .to_socket_addrs()
         .expect("Invalid bind address")
-        .next().unwrap();
+        .next()
+        .unwrap();
 
     let remote_addresses: HashSet<SocketAddr> = match matches.values_of("remote-address") {
-        Some(addrs) => addrs.flat_map(|addr| addr.to_socket_addrs()
-            .expect("Invalid remote address"))
+        Some(addrs) => addrs
+            .flat_map(|addr| addr.to_socket_addrs().expect("Invalid remote address"))
             .collect(),
         None => HashSet::new(),
     };
@@ -141,7 +145,9 @@ fn main() {
     }
 
     if let Some(tgi) = matches.value_of("txn-gen-interval") {
-        cfg.txn_gen_interval = tgi.parse().expect("Invalid transaction generation interval.");
+        cfg.txn_gen_interval = tgi
+            .parse()
+            .expect("Invalid transaction generation interval.");
     }
 
     if let Some(tgb) = matches.value_of("txn-bytes") {
@@ -149,23 +155,22 @@ fn main() {
     }
 
     if let Some(knc) = matches.value_of("keygen-node-count") {
-        cfg.keygen_peer_count =
-            knc.parse::<usize>()
+        cfg.keygen_peer_count = knc
+            .parse::<usize>()
             .expect("Invalid minimum keygen node count.")
             - 1;
     }
 
     if let Some(oed) = matches.value_of("output-extra-delay") {
         cfg.output_extra_delay_ms = oed.parse().expect("Invalid output extra delay.");
-
     }
 
     let hb = Hydrabadger::new(bind_address, cfg);
 
     let gen_txn = |txn_gen_count, txn_gen_bytes| {
-        (0..txn_gen_count).map(|_| {
-            Transaction::random(txn_gen_bytes)
-        }).collect::<Vec<_>>()
+        (0..txn_gen_count)
+            .map(|_| Transaction::random(txn_gen_bytes))
+            .collect::<Vec<_>>()
     };
 
     hb.run_node(Some(remote_addresses), Some(gen_txn));
