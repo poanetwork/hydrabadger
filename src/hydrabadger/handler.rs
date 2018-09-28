@@ -137,18 +137,6 @@ impl<T: Contribution> Handler<T> {
     }
 
     fn handle_input(&self, input: Input<T>, state: &mut State<T>) -> Result<(), Error> {
-        // match &input {
-        //     QhbInput::User(_contrib) => {},
-        //     QhbInput::Change(ref qhb_change) => match qhb_change {
-        //         QhbChange::Add(uid, pk) => {
-        //             if uid == self.hdb.uid() {
-        //                 debug_assert!(*pk == self.hdb.secret_key().public_key());
-        //             }
-        //         }
-        //         QhbChange::Remove(_uid) => {},
-        //     },
-        // }
-
         trace!("hydrabadger::Handler: About to input....");
         if let Some(step_res) = state.input(input) {
             let step = step_res.map_err(|err| {
@@ -162,17 +150,7 @@ impl<T: Contribution> Handler<T> {
     }
 
     fn handle_message(&self, msg: Message, src_uid: &Uid, state: &mut State<T>) -> Result <(), Error> {
-        trace!("hydrabadger::Handler: HB_MESSAGE: {:?}", msg);
-        // match &msg {
-        //     // A message belonging to the `HoneyBadger` algorithm started in
-        //     // the given epoch.
-        //     DhbMessage::HoneyBadger(start_epoch, ref msg) => {},
-        //     // A transaction to be committed, signed by a node.
-        //     DhbMessage::KeyGen(epoch, _key_gen_msg, _sig) => {},
-        //     // A vote to be committed, signed by a validator.
-        //     DhbMessage::SignedVote(signed_vote) => {},
-        // }
-        trace!("hydrabadger::Handler: About to handle_message....");
+        trace!("hydrabadger::Handler: About to handle_message: {:?}", msg);
         if let Some(step_res) = state.handle_message(src_uid, msg) {
             let step = step_res.map_err(|err| {
                 error!("Honey Badger handle_message error: {:?}", err);

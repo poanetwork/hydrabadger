@@ -225,6 +225,21 @@ impl<T: Contribution> Hydrabadger<T> {
         }
     }
 
+    /// Handles a incoming batch of user transactions.
+    pub fn push_user_transactions(&self, txn: Vec<T>) -> Result<(), Error> {
+        let (dsct, _, _) = self.state_info_stale();
+
+        match dsct {
+            StateDsct::Validator => {
+                self.send_internal(
+                    InternalMessage::hb_input(self.inner.uid, OutAddr(*self.inner.addr), QhbInput::User(txn))
+                );
+                Ok(())
+            }
+            _ => Err(Error::PushUserTransactionNotValidator),
+        }
+    }
+
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream)
             -> impl Future<Item = (), Error = ()> {
@@ -306,7 +321,7 @@ impl<T: Contribution> Hydrabadger<T> {
 
     /// Returns a future that generates random transactions and logs status
     /// messages.
-    fn generate_txns_status(self, gen_txn: fn(usize, usize) -> Vec<T>) -> impl Future<Item = (), Error = ()> {
+    fn generate_txns_status(self, gen_txns: Option<fn(usize, usize) -> Vec<T>>) -> impl Future<Item = (), Error = ()> {
         Interval::new(Instant::now(), Duration::from_millis(self.inner.config.txn_gen_interval))
             .for_each(move |_| {
                 let hdb = self.clone();
@@ -331,22 +346,19 @@ impl<T: Contribution> Hydrabadger<T> {
 
                 drop(peers);
 
-                match dsct {
-                    StateDsct::Validator => {
-                        info!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
-                        // // Send some random transactions to our internal HB instance.
-                        // let txns: Vec<_> = (0..self.inner.config.txn_gen_count).map(|_| {
-                        //     Transaction::random(self.inner.config.txn_gen_bytes)
-                        // }).collect();
+                if let Some(gt) = gen_txns {
+                    match dsct {
+                        StateDsct::Validator => {
+                            info!("Generating and inputting {} random transactions...", self.inner.config.txn_gen_count);
+                            // Send some random transactions to our internal HB instance.
+                            let txns = gt(self.inner.config.txn_gen_count, self.inner.config.txn_gen_bytes);
 
-                        // Send some random transactions to our internal HB instance.
-                        let txns = gen_txn(self.inner.config.txn_gen_count, self.inner.config.txn_gen_bytes);
-
-                        hdb.send_internal(
-                            InternalMessage::hb_input(hdb.inner.uid, OutAddr(*hdb.inner.addr), QhbInput::User(txns))
-                        );
-                    },
-                    _ => {},
+                            hdb.send_internal(
+                                InternalMessage::hb_input(hdb.inner.uid, OutAddr(*hdb.inner.addr), QhbInput::User(txns))
+                            );
+                        },
+                        _ => {},
+                    }
                 }
 
                 Ok(())
@@ -355,7 +367,7 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Binds to a host address and returns a future which starts the node.
-    pub fn node(self, remotes: Option<HashSet<SocketAddr>>, gen_txn: Option<fn(usize, usize) -> Vec<T>>)
+    pub fn node(self, remotes: Option<HashSet<SocketAddr>>, gen_txns: Option<fn(usize, usize) -> Vec<T>>)
             -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
@@ -382,21 +394,14 @@ impl<T: Contribution> Hydrabadger<T> {
         let hdb_handler = self.handler()
             .map_err(|err| error!("Handler internal error: {:?}", err));
 
-        let generate_txns_status = match gen_txn {
-            Some(gen_txn) => {
-                Either::A(self.clone().generate_txns_status(gen_txn))
-            },
-            None => {
-                Either::B(future::ok(()))
-            }
-        };
+        let generate_txns_status = self.clone().generate_txns_status(gen_txns);
 
         listen.join4(connect, generate_txns_status, hdb_handler).map(|(_, _, _, _)| ())
     }
 
     /// Starts a node.
-    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>, gen_txn: Option<fn(usize, usize) -> Vec<T>>) {
-        tokio::run(self.node(remotes, gen_txn));
+    pub fn run_node(self, remotes: Option<HashSet<SocketAddr>>, gen_txns: Option<fn(usize, usize) -> Vec<T>>) {
+        tokio::run(self.node(remotes, gen_txns));
     }
 
     pub fn addr(&self) -> &InAddr {
