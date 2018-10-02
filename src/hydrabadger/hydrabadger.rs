@@ -34,7 +34,7 @@ use tokio::{
 };
 use {
     Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage, WireMessageKind,
-    WireMessages,
+    WireMessages, BatchRx,
 };
 
 // The HoneyBadger batch size.
@@ -112,6 +112,7 @@ struct Inner<T: Contribution> {
 pub struct Hydrabadger<T: Contribution> {
     inner: Arc<Inner<T>>,
     handler: Arc<Mutex<Option<Handler<T>>>>,
+    batch_rx: Arc<Mutex<Option<BatchRx<T>>>>,
 }
 
 impl<T: Contribution> Hydrabadger<T> {
@@ -125,6 +126,7 @@ impl<T: Contribution> Hydrabadger<T> {
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
+        let (batch_tx, batch_rx) = mpsc::unbounded();
 
         info!("");
         info!("Local Hydrabadger Node: ");
@@ -156,9 +158,10 @@ impl<T: Contribution> Hydrabadger<T> {
         let hdb = Hydrabadger {
             inner,
             handler: Arc::new(Mutex::new(None)),
+            batch_rx: Arc::new(Mutex::new(Some(batch_rx))),
         };
 
-        *hdb.handler.lock() = Some(Handler::new(hdb.clone(), peer_internal_rx));
+        *hdb.handler.lock() = Some(Handler::new(hdb.clone(), peer_internal_rx, batch_tx));
 
         hdb
     }
@@ -171,6 +174,11 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Returns the pre-created handler.
     pub fn handler(&self) -> Option<Handler<T>> {
         self.handler.lock().take()
+    }
+
+    /// Returns the batch output receiver.
+    pub fn batch_rx(&self) -> Option<BatchRx<T>> {
+        self.batch_rx.lock().take()
     }
 
     /// Returns a reference to the inner state.

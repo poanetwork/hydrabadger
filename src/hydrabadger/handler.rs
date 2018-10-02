@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use tokio::{self, prelude::*};
 use {
     Contribution, InAddr, Input, InternalMessage, InternalMessageKind, InternalRx, Message,
-    NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind,
+    NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
 };
 
 /// Hydrabadger event (internal message) handler.
@@ -35,15 +35,18 @@ pub struct Handler<T: Contribution> {
     wire_queue: SegQueue<(Uid, WireMessage<T>, usize)>,
     // Output from HoneyBadger:
     step_queue: SegQueue<Step<T>>,
+    // TODO: Use a bounded tx/rx (find a sensible upper bound):
+    batch_tx: BatchTx<T>,
 }
 
 impl<T: Contribution> Handler<T> {
-    pub(super) fn new(hdb: Hydrabadger<T>, peer_internal_rx: InternalRx<T>) -> Handler<T> {
+    pub(super) fn new(hdb: Hydrabadger<T>, peer_internal_rx: InternalRx<T>, batch_tx: BatchTx<T>) -> Handler<T> {
         Handler {
             hdb,
             peer_internal_rx,
             wire_queue: SegQueue::new(),
             step_queue: SegQueue::new(),
+            batch_tx,
         }
     }
 
@@ -826,7 +829,16 @@ impl<T: Contribution> Future for Handler<T> {
                     ::std::thread::sleep(::std::time::Duration::from_millis(extra_delay));
                 }
 
-                // TODO: Something useful!
+                // Send the batch along its merry way:
+                if !self.batch_tx.is_closed() {
+                    if let Err(err) = self.batch_tx.unbounded_send(batch) {
+                        error!("Unable to send batch output. Shutting down...");
+                        return Ok(Async::Ready(()));
+                    }
+                } else {
+                    info!("Batch output receiver dropped. Shutting down...");
+                    return Ok(Async::Ready(()));
+                }
             }
 
             for hb_msg in step.messages.drain(..) {

@@ -72,7 +72,7 @@ use uuid::Uuid;
 // use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{JoinPlan, Message as DhbMessage},
+    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, Batch},
     messaging::Step as MessagingStep,
     queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadger},
     sync_key_gen::{Ack, Part},
@@ -100,6 +100,14 @@ type InternalTx<T> = mpsc::UnboundedSender<InternalMessage<T>>;
 /// Receive half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 type InternalRx<T> = mpsc::UnboundedReceiver<InternalMessage<T>>;
+
+/// Transmit half of the batch output channel.
+// TODO: Use a bounded tx/rx (find a sensible upper bound):
+type BatchTx<T> = mpsc::UnboundedSender<Batch<Vec<Vec<T>>, Uid>>;
+
+/// Receive half of the batch output channel.
+// TODO: Use a bounded tx/rx (find a sensible upper bound):
+type BatchRx<T> = mpsc::UnboundedReceiver<Batch<Vec<Vec<T>>, Uid>>;
 
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
