@@ -356,7 +356,7 @@ impl<T: Contribution> Hydrabadger<T> {
             // Log state:
             let (dsct, p_ttl, p_est) = hdb.state_info_stale();
             let peer_count = peers.count_total();
-            info!("State: {:?}({})", dsct, peer_count);
+            info!("Hydrabadger State: {:?}({})", dsct, peer_count);
 
             // Log peer list:
             let peer_list = peers
