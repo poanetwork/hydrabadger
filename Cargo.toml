@@ -54,12 +54,9 @@ clear_on_drop = "*"
 version = "*"
 git = "https://github.com/c0gent/hbbft"
 # git = "https://github.com/poanetwork/hbbft"
-# branch = "c0gent-supertraits"
-branch = "master"
-# branch = "add-mlock-error-handling"
-# branch = "afck-agreement"
+branch = "pre-rng-change"
+# branch = "master"
 # path = "../hbbft"
-# features = ["serialization-protobuf"]
 
 [profile.release]
 debug = true

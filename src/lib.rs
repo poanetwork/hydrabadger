@@ -66,8 +66,7 @@ use std::{
     net::SocketAddr,
     ops::Deref,
 };
-use tokio::{io, net::TcpStream, prelude::*};
-use tokio_io::codec::length_delimited::Framed;
+use tokio::{io, net::TcpStream, prelude::*, codec::{Framed, LengthDelimitedCodec}};
 use uuid::Uuid;
 // use bincode::{serialize, deserialize};
 use hbbft::{
@@ -306,14 +305,14 @@ impl<T: Contribution> From<WireMessageKind<T>> for WireMessage<T> {
 /// A stream/sink of `WireMessage`s connected to a socket.
 #[derive(Debug)]
 pub struct WireMessages<T> {
-    framed: Framed<TcpStream>,
+    framed: Framed<TcpStream, LengthDelimitedCodec>,
     _t: PhantomData<T>,
 }
 
 impl<T: Contribution> WireMessages<T> {
     pub fn new(socket: TcpStream) -> WireMessages<T> {
         WireMessages {
-            framed: Framed::new(socket),
+            framed: Framed::new(socket, LengthDelimitedCodec::new()),
             _t: PhantomData,
         }
     }
@@ -362,7 +361,7 @@ impl<T: Contribution> Sink for WireMessages<T> {
             Ok(s) => serialized.extend_from_slice(&s),
             Err(err) => return Err(Error::Io(io::Error::new(io::ErrorKind::Other, err))),
         }
-        match self.framed.start_send(serialized) {
+        match self.framed.start_send(serialized.freeze()) {
             Ok(async_sink) => match async_sink {
                 AsyncSink::Ready => Ok(AsyncSink::Ready),
                 AsyncSink::NotReady(_) => Ok(AsyncSink::NotReady(item)),
