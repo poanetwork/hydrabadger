@@ -138,12 +138,6 @@ impl<T: Contribution> Hydrabadger<T> {
         warn!("****** This is an alpha build. Do not use in production! ******");
         warn!("");
 
-        // println!("");
-        // println!("Local Hydrabadger Node: ");
-        // println!("    UID:             {}", uid);
-        // println!("    Socket Address:  {}", addr);
-        // println!("    Public Key:      {:?}", secret_key.public_key());
-
         let inner = Arc::new(Inner {
             uid,
             addr: InAddr(addr),

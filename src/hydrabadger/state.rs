@@ -17,7 +17,6 @@ use hbbft::{
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
 use {Contribution, Input, Message, NetworkNodeInfo, NetworkState, Step, Uid};
-// use super::{BATCH_SIZE, config.keygen_peer_count};
 
 /// A `State` discriminant.
 #[derive(Copy, Clone, Debug)]
@@ -77,7 +76,6 @@ pub(crate) enum State<T: Contribution> {
     },
     AwaitingMorePeersForKeyGeneration {
         // Queued input to HoneyBadger:
-        // FIXME: ACTUALLY USE THIS QUEUED INPUT!
         ack_queue: Option<SegQueue<(Uid, Ack)>>,
         iom_queue: Option<SegQueue<InputOrMessage<T>>>,
     },
@@ -120,19 +118,6 @@ impl<T: Contribution> State<T> {
     pub(super) fn disconnected() -> State<T> {
         State::Disconnected { /*secret_key: secret_key*/ }
     }
-
-    // /// Sets the state to `DeterminingNetworkState`.
-    // //
-    // // TODO: Add proper error handling:
-    // fn set_determining_network_state(&mut self) {
-    //     *self = match self {
-    //         State::Disconnected { } => {
-    //             info!("Setting state: `DeterminingNetworkState`.");
-    //             State::DeterminingNetworkState { }
-    //         },
-    //         _ => panic!("Must be disconnected before calling `::peer_connection_added`."),
-    //     };
-    // }
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_awaiting_more_peers(&mut self) {
@@ -184,7 +169,6 @@ impl<T: Contribution> State<T> {
                 ref mut iom_queue,
                 ref mut ack_queue,
             } => {
-                // let secret_key = secret_key.clone();
                 let threshold = config.keygen_peer_count / 3;
 
                 let mut public_keys: BTreeMap<Uid, PublicKey> = peers
@@ -210,12 +194,6 @@ impl<T: Contribution> State<T> {
                     ),
                     None => unimplemented!(),
                 };
-
-                // info!("KEY GENERATION: Handling our own `Ack`...");
-                // let fault_log = sync_key_gen.handle_ack(local_uid, ack.clone());
-                // if !fault_log.is_empty() {
-                //     error!("Errors acknowledging part (from self):\n {:?}", fault_log);
-                // }
 
                 info!("KEY GENERATION: Queueing our own `Ack`...");
                 ack_queue.as_ref().unwrap().push((*local_uid, ack.clone()));
@@ -561,9 +539,6 @@ impl<T: Contribution> State<T> {
                     .unwrap()
                     .push(InputOrMessage::Message(*src_uid, msg));
             }
-            // State::GeneratingKeys { ref iom_queue, .. } => {
-            //     iom_queue.as_ref().unwrap().push(InputOrMessage::Message(msg));
-            // },
             s => panic!(
                 "State::handle_message: Must be connected in order to input to \
                  honey badger. State: {}",

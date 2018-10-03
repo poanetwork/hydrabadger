@@ -94,10 +94,6 @@ impl<T: Contribution> Handler<T> {
     ) -> Result<(), Error> {
         match state.discriminant() {
             StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
-                // panic!("hydrabadger::Handler::handle_new_established_peer: \
-                //     Received `WireMessageKind::WelcomeRequestChangeAdd` or \
-                //     `InternalMessageKind::NewIncomingConnection` while \
-                //     `StateDsct::Disconnected` or `DeterminingNetworkState`.");
                 state.update_peer_connection_added(&peers);
                 self.hdb.set_state_discriminant(state.discriminant());
             }
@@ -199,7 +195,6 @@ impl<T: Contribution> Handler<T> {
         let fault_log = sync_key_gen.handle_ack(uid, ack.clone());
         if !fault_log.is_empty() {
             error!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
-            // panic!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
         }
         *ack_count += 1;
     }
@@ -245,7 +240,6 @@ impl<T: Contribution> Handler<T> {
                     ),
                     None => {
                         error!("`QueueingHoneyBadger::handle_part` returned `None`.");
-                        // panic!("`QueueingHoneyBadger::handle_part` returned `None`.");
                         return;
                     }
                 };
@@ -320,7 +314,6 @@ impl<T: Contribution> Handler<T> {
                     "Additional unhandled `Ack` received from '{}': \n{:?}",
                     src_uid, ack
                 );
-                // panic!("Additional unhandled `Ack` received from '{}': \n{:?}", src_uid, ack);
             }
             _ => panic!("::handle_key_gen_ack: State must be `GeneratingKeys`."),
         }
@@ -355,8 +348,7 @@ impl<T: Contribution> Handler<T> {
                     state.discriminant()
                 );
             }
-            StateDsct::Observer | StateDsct::Validator => {} // Ignore
-                                                             // sd @ _ => unimplemented!("hydrabadger::Handler::handle_join_plan: {:?}", sd),
+            StateDsct::Observer | StateDsct::Validator => {}
         }
 
         Ok(())
@@ -365,7 +357,6 @@ impl<T: Contribution> Handler<T> {
     // TODO: Create a type for `net_info`.
     fn instantiate_hb(
         &self,
-        // net_info: Option<(Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)>,
         jp_opt: Option<JoinPlan<Uid>>,
         state: &mut State<T>,
         peers: &Peers<T>,
@@ -377,10 +368,6 @@ impl<T: Contribution> Handler<T> {
             StateDsct::DeterminingNetworkState | StateDsct::GeneratingKeys => {
                 info!("== INSTANTIATING HONEY BADGER ==");
                 match jp_opt {
-                    // Some((nni, pk_set, pk_map)) => {
-                    //     iom_queue_opt = Some(state.set_observer(*self.hdb.uid(),
-                    //         self.hdb.secret_key().clone(), nni, pk_set, pk_map));
-                    // },
                     Some(jp) => {
                         iom_queue_opt = Some(state.set_observer(
                             *self.hdb.uid(),
@@ -452,7 +439,6 @@ impl<T: Contribution> Handler<T> {
             }
             NetworkState::GeneratingKeys(p_infos, public_keys) => {
                 peer_infos = p_infos;
-                // state.set_observer();
             }
             NetworkState::Active(net_info) => {
                 peer_infos = net_info.0.clone();
@@ -474,7 +460,6 @@ impl<T: Contribution> Handler<T> {
                     _ => {}
                 }
 
-                // self.instantiate_hb(Some(net_info), peers, state)?;
             }
             NetworkState::None => panic!("`NetworkState::None` received."),
         }
@@ -505,13 +490,6 @@ impl<T: Contribution> Handler<T> {
         state: &mut State<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        // self.hdb.qhb.write().input(Input::Change(Change::Remove(self.uid)))
-        //     .expect("Error adding new peer to HB");
-
-        // Input::Change(Change::Remove(NodeUid(0)))
-        // self.hdb.peer_internal_tx.unbounded_send(InternalMessage::input(
-        //     uid, self.out_addr, Input::Change(Change::Remove(uid)))).unwrap();
-
         state.update_peer_connection_dropped(peers);
         self.hdb.set_state_discriminant(state.discriminant());
 
@@ -567,18 +545,6 @@ impl<T: Contribution> Handler<T> {
             ) => {
                 let peers = self.hdb.peers();
 
-                // if let StateDsct::Disconnected = state.discriminant() {
-                //     state.set_awaiting_more_peers();
-                // }
-
-                // match state.discriminant() {
-                //     StateDsct::Disconnected | StateDsct::DeterminingNetworkState  => {
-                //         state.set_awaiting_more_peers();
-                //         self.hdb.set_state_discriminant(state.discriminant());
-                //     },
-                //     _ => {},
-                // }
-
                 let net_state;
 
                 match state {
@@ -587,10 +553,6 @@ impl<T: Contribution> Handler<T> {
                         self.hdb.set_state_discriminant(state.discriminant());
                         net_state = state.network_state(&peers);
                     }
-                    // | State::GeneratingKeys { .. }
-                    // | State::AwaitingMorePeersForKeyGeneration { .. }  => {
-                    //     net_state = state.network_state(&peers);
-                    // },
                     State::DeterminingNetworkState {
                         ref network_state, ..
                     } => match network_state {
@@ -790,7 +752,6 @@ impl<T: Contribution> Future for Handler<T> {
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
             for batch in step.output.drain(..) {
-                // debug!("    (HYDRABADGER) BATCH OUTPUT: \n{:?}", batch);
                 info!("A HONEY BADGER BATCH WITH {} CONTRIBUTIONS IS BEING STREAMED. WATCH OUT!", batch.len());
 
                 if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {

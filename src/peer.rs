@@ -128,10 +128,6 @@ impl<T: Contribution> Future for PeerHandler<T> {
                         ));
                     }
                     WireMessageKind::Message(src_uid, msg) => {
-                        // let uid = self.uid.clone()
-                        //     .expect("`WireMessageKind::Message` received before \
-                        //         establishing peer");
-
                         if let Some(peer_uid) = self.uid.as_ref() {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
@@ -160,18 +156,11 @@ impl<T: Contribution> Future for PeerHandler<T> {
                     )),
                 }
             } else {
-                // EOF was reached. The remote client has disconnected. There is
-                // nothing more to do.
                 info!("Peer ({}: '{:?}') disconnected.", self.out_addr, self.uid);
                 return Ok(Async::Ready(()));
             }
         }
 
-        // As always, it is important to not just return `NotReady` without
-        // ensuring an inner future also returned `NotReady`.
-        //
-        // We know we got a `NotReady` from either `self.rx` or `self.wire_msgs`, so
-        // the contract is respected.
         Ok(Async::NotReady)
     }
 }
@@ -233,10 +222,8 @@ impl<T: Contribution> Peer<T> {
     fn new(
         out_addr: OutAddr,
         tx: WireTx<T>,
-        // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
         pub_info: Option<(Uid, InAddr, PublicKey)>,
     ) -> Peer<T> {
-        // assert!(uid.is_some() == in_addr.is_some() && uid.is_some() == pk.is_some());
         let state = match pub_info {
             None => State::Handshaking,
             Some((uid, in_addr, pk)) => State::EstablishedValidator { uid, in_addr, pk },
@@ -420,7 +407,6 @@ impl<T: Contribution> Peers<T> {
         &mut self,
         out_addr: OutAddr,
         tx: WireTx<T>,
-        // uid: Option<Uid>, in_addr: Option<InAddr>, pk: Option<PublicKey>
         pub_info: Option<(Uid, InAddr, PublicKey)>,
     ) {
         let peer = Peer::new(out_addr, tx, pub_info);
@@ -535,7 +521,6 @@ impl<T: Contribution> Peers<T> {
     }
 
     pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer<T>> {
-        // self.peers.get()
         self.out_addrs
             .get(uid.borrow())
             .and_then(|addr| self.get(addr))
