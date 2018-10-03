@@ -71,7 +71,7 @@ use uuid::Uuid;
 // use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, Batch},
+    dynamic_honey_badger::{JoinPlan, Message as DhbMessage},
     messaging::Step as MessagingStep,
     queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadger},
     sync_key_gen::{Ack, Part},
@@ -80,9 +80,9 @@ use hbbft::{
 
 pub use blockchain::{Blockchain, MiningError};
 pub use hydrabadger::{Config, Hydrabadger};
-
-// FIME: TEMPORARY -- Create another error type.
+// TODO: Create a separate, library-wide error type.
 pub use hydrabadger::Error;
+pub use hbbft::dynamic_honey_badger::Batch;
 
 /// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
@@ -106,7 +106,7 @@ type BatchTx<T> = mpsc::UnboundedSender<Batch<Vec<Vec<T>>, Uid>>;
 
 /// Receive half of the batch output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type BatchRx<T> = mpsc::UnboundedReceiver<Batch<Vec<Vec<T>>, Uid>>;
+pub type BatchRx<T> = mpsc::UnboundedReceiver<Batch<Vec<Vec<T>>, Uid>>;
 
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static

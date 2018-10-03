@@ -789,12 +789,9 @@ impl<T: Contribution> Future for Handler<T> {
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
-            if step.output.len() > 0 {
-                info!("NEW STEP OUTPUT:");
-            }
-
             for batch in step.output.drain(..) {
-                info!("    BATCH: \n{:?}", batch);
+                // debug!("    (HYDRABADGER) BATCH OUTPUT: \n{:?}", batch);
+                info!("A HONEY BADGER BATCH WITH {} CONTRIBUTIONS IS BEING STREAMED. WATCH OUT!", batch.len());
 
                 if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {
                     return Ok(Async::Ready(()));
