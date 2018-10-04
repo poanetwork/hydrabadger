@@ -4,7 +4,7 @@
 
 use futures::sync::mpsc;
 use hbbft::crypto::PublicKey;
-use hbbft::queueing_honey_badger::Input as HbInput;
+use hbbft::dynamic_honey_badger::Input as HbInput;
 use hydrabadger::{Error, Hydrabadger};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -138,7 +138,7 @@ impl<T: Contribution> Future for PeerHandler<T> {
                             msg,
                         ))
                     }
-                    WireMessageKind::Transactions(src_uid, txns) => {
+                    WireMessageKind::Transaction(src_uid, txn) => {
                         if let Some(peer_uid) = self.uid.as_ref() {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
@@ -146,7 +146,7 @@ impl<T: Contribution> Future for PeerHandler<T> {
                         self.hdb.send_internal(InternalMessage::hb_input(
                             src_uid,
                             self.out_addr,
-                            HbInput::User(txns),
+                            HbInput::User(txn),
                         ))
                     }
                     kind => self.hdb.send_internal(InternalMessage::wire(

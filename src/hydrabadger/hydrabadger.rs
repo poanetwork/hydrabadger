@@ -11,7 +11,7 @@ use futures::{
 };
 use hbbft::{
     crypto::{PublicKey, SecretKey},
-    queueing_honey_badger::Input as QhbInput,
+    dynamic_honey_badger::Input as DhbInput,
 };
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer::{PeerHandler, Peers};
@@ -229,7 +229,7 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Handles a incoming batch of user transactions.
-    pub fn push_user_transactions(&self, txn: Vec<T>) -> Result<(), Error> {
+    pub fn push_user_transaction(&self, txn: T) -> Result<(), Error> {
         let (dsct, _, _) = self.state_info_stale();
 
         match dsct {
@@ -237,7 +237,7 @@ impl<T: Contribution> Hydrabadger<T> {
                 self.send_internal(InternalMessage::hb_input(
                     self.inner.uid,
                     OutAddr(*self.inner.addr),
-                    QhbInput::User(txn),
+                    DhbInput::User(txn),
                 ));
                 Ok(())
             }
@@ -392,11 +392,13 @@ impl<T: Contribution> Hydrabadger<T> {
                             self.inner.config.txn_gen_bytes,
                         );
 
-                        hdb.send_internal(InternalMessage::hb_input(
-                            hdb.inner.uid,
-                            OutAddr(*hdb.inner.addr),
-                            QhbInput::User(txns),
-                        ));
+                        for txn in txns {
+                            hdb.send_internal(InternalMessage::hb_input(
+                                hdb.inner.uid,
+                                OutAddr(*hdb.inner.addr),
+                                DhbInput::User(txn),
+                            ));
+                        }
                     }
                     _ => {}
                 }

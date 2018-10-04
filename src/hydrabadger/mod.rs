@@ -6,7 +6,8 @@ use self::handler::Handler;
 use self::state::{State, StateDsct};
 use bincode;
 use hbbft::{
-    dynamic_honey_badger::Error as DhbError, queueing_honey_badger::Error as QhbError,
+    dynamic_honey_badger::Error as DhbError,
+    // queueing_honey_badger::Error as QhbError,
     sync_key_gen::Error as SyncKeyGenError,
 };
 use std;
@@ -55,12 +56,6 @@ pub enum Error {
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Error {
         Error::Io(err)
-    }
-}
-
-impl From<QhbError> for Error {
-    fn from(_err: QhbError) -> Error {
-        Error::Qhb(())
     }
 }
 

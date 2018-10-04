@@ -12,9 +12,9 @@ use super::{Error, Hydrabadger, InputOrMessage, State, StateDsct};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{Change, ChangeState, JoinPlan, Message as DhbMessage},
+    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange, Input as DhbInput},
     messaging::{DistAlgorithm, Target},
-    queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
+    // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
 };
 use peer::Peers;
@@ -141,10 +141,10 @@ impl<T: Contribution> Handler<T> {
                 // If the new peer sends a request-change-add (to be a
                 // validator), input the change into HB and broadcast, etc.
                 if request_change_add {
-                    let qhb = state.qhb_mut().unwrap();
+                    let dhb = state.dhb_mut().unwrap();
                     info!("Change-Adding ('{}') to honey badger.", src_uid);
-                    let step = qhb
-                        .handle_input(QhbInput::Change(QhbChange::Add(src_uid, src_pk)))
+                    let step = dhb
+                        .handle_input(DhbInput::Change(DhbChange::Add(src_uid, src_pk)))
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
                 }
@@ -239,7 +239,7 @@ impl<T: Contribution> Handler<T> {
                         faults
                     ),
                     None => {
-                        error!("`QueueingHoneyBadger::handle_part` returned `None`.");
+                        error!("`DynamicHoneyBadger::handle_part` returned `None`.");
                         return;
                     }
                 };
@@ -510,19 +510,19 @@ impl<T: Contribution> Handler<T> {
             State::GeneratingKeys { .. } => {
                 // Do something here (possibly panic).
             }
-            State::Observer { ref mut qhb } => {
+            State::Observer { ref mut dhb } => {
                 // Do nothing instead?
-                let step = qhb
+                let step = dhb
                     .as_mut()
                     .unwrap()
-                    .handle_input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
+                    .handle_input(DhbInput::Change(DhbChange::Remove(src_uid)))?;
                 self.step_queue.push(step);
             }
-            State::Validator { ref mut qhb } => {
-                let step = qhb
+            State::Validator { ref mut dhb } => {
+                let step = dhb
                     .as_mut()
                     .unwrap()
-                    .handle_input(QhbInput::Change(QhbChange::Remove(src_uid)))?;
+                    .handle_input(DhbInput::Change(DhbChange::Remove(src_uid)))?;
                 self.step_queue.push(step);
             }
         }
@@ -752,7 +752,7 @@ impl<T: Contribution> Future for Handler<T> {
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {
             for batch in step.output.drain(..) {
-                info!("A HONEY BADGER BATCH WITH {} CONTRIBUTIONS IS BEING STREAMED. WATCH OUT!", batch.len());
+                info!("A HONEY BADGER BATCH WITH CONTRIBUTIONS IS BEING STREAMED...");
 
                 if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {
                     return Ok(Async::Ready(()));
@@ -768,15 +768,15 @@ impl<T: Contribution> Future for Handler<T> {
                     ChangeState::None => {}
                     ChangeState::InProgress(_change) => {}
                     ChangeState::Complete(change) => match change {
-                        Change::Add(uid, pk) => {
+                        DhbChange::Add(uid, pk) => {
                             if uid == self.hdb.uid() {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
-                                assert!(state.qhb().unwrap().dyn_hb().netinfo().is_validator());
+                                assert!(state.dhb().unwrap().netinfo().is_validator());
                                 state.promote_to_validator()?;
                                 self.hdb.set_state_discriminant(state.discriminant());
                             }
                         }
-                        Change::Remove(uid) => {}
+                        DhbChange::Remove(uid) => {}
                     },
                 }
 
@@ -824,7 +824,7 @@ impl<T: Contribution> Future for Handler<T> {
             }
         }
 
-        // TODO: Iterate through `state.qhb().unwrap().dyn_hb().netinfo()` and
+        // TODO: Iterate through `state.dhb().unwrap().dyn_hb().netinfo()` and
         // `peers` to ensure that the lists match. Make adjustments where
         // necessary.
 

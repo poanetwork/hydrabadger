@@ -9,9 +9,9 @@ use super::{Config, Error, InputOrMessage};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
-    dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan},
+    dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan, Error as DhbError},
     messaging::{DistAlgorithm, NetworkInfo},
-    queueing_honey_badger::{Error as QhbError, QueueingHoneyBadger},
+    // queueing_honey_badger::{Error as QhbError, DynamicHoneyBadger},
     sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
 };
 use peer::Peers;
@@ -92,10 +92,10 @@ pub(crate) enum State<T: Contribution> {
         iom_queue: Option<SegQueue<InputOrMessage<T>>>,
     },
     Observer {
-        qhb: Option<QueueingHoneyBadger<Vec<T>, Uid>>,
+        dhb: Option<DynamicHoneyBadger<T, Uid>>,
     },
     Validator {
-        qhb: Option<QueueingHoneyBadger<Vec<T>, Uid>>,
+        dhb: Option<DynamicHoneyBadger<T, Uid>>,
     },
 }
 
@@ -226,7 +226,7 @@ impl<T: Contribution> State<T> {
         local_uid: Uid,
         local_sk: SecretKey,
         jp: JoinPlan<Uid>,
-        cfg: &Config,
+        _cfg: &Config,
         step_queue: &SegQueue<Step<T>>,
     ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
@@ -234,14 +234,9 @@ impl<T: Contribution> State<T> {
             State::DeterminingNetworkState {
                 ref mut iom_queue, ..
             } => {
-                let (dhb, dhb_step) =
-                    DynamicHoneyBadger::builder().build_joining(local_uid, local_sk, jp)?;
-                step_queue.push(dhb_step.convert());
-
-                let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
-                    .batch_size(cfg.batch_size)
-                    .build();
-                step_queue.push(qhb_step);
+                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
+                    .build_joining(local_uid, local_sk, jp)?;
+                step_queue.push(dhb_step);
 
                 iom_queue_ret = iom_queue.take().unwrap();
 
@@ -251,8 +246,8 @@ impl<T: Contribution> State<T> {
 
                 {
                     // TODO: Consolidate or remove:
-                    let pk_set = qhb.dyn_hb().netinfo().public_key_set();
-                    let pk_map = qhb.dyn_hb().netinfo().public_key_map();
+                    let pk_set = dhb.netinfo().public_key_set();
+                    let pk_map = dhb.netinfo().public_key_map();
                     info!("");
                     info!("");
                     info!("PUBLIC KEY: {:?}", pk_set.public_key());
@@ -262,7 +257,7 @@ impl<T: Contribution> State<T> {
                     info!("");
                 }
 
-                State::Observer { qhb: Some(qhb) }
+                State::Observer { dhb: Some(dhb) }
             }
             s => panic!(
                 "State::set_observer: State must be `GeneratingKeys`. \
@@ -310,13 +305,9 @@ impl<T: Contribution> State<T> {
 
                 let netinfo = NetworkInfo::new(local_uid, sk_share, pk_set, local_sk, node_ids);
 
-                let (dhb, dhb_step) = DynamicHoneyBadger::builder().build(netinfo)?;
-                step_queue.push(dhb_step.convert());
-
-                let (qhb, qhb_step) = QueueingHoneyBadger::builder(dhb)
-                    .batch_size(cfg.batch_size)
-                    .build();
-                step_queue.push(qhb_step);
+                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
+                    .build(netinfo)?;
+                step_queue.push(dhb_step);
 
                 info!("");
                 info!("== HONEY BADGER INITIALIZED ==");
@@ -324,8 +315,8 @@ impl<T: Contribution> State<T> {
 
                 {
                     // TODO: Consolidate or remove:
-                    let pk_set = qhb.dyn_hb().netinfo().public_key_set();
-                    let pk_map = qhb.dyn_hb().netinfo().public_key_map();
+                    let pk_set = dhb.netinfo().public_key_set();
+                    let pk_map = dhb.netinfo().public_key_map();
                     info!("");
                     info!("");
                     info!("PUBLIC KEY: {:?}", pk_set.public_key());
@@ -336,7 +327,7 @@ impl<T: Contribution> State<T> {
                 }
 
                 iom_queue_ret = iom_queue.take().unwrap();
-                State::Validator { qhb: Some(qhb) }
+                State::Validator { dhb: Some(dhb) }
             }
             s => panic!(
                 "State::set_validator: State must be `GeneratingKeys`. State: {}",
@@ -349,9 +340,9 @@ impl<T: Contribution> State<T> {
     #[must_use]
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
         *self = match self {
-            State::Observer { ref mut qhb } => {
+            State::Observer { ref mut dhb } => {
                 info!("=== PROMOTING NODE TO VALIDATOR ===");
-                State::Validator { qhb: qhb.take() }
+                State::Validator { dhb: dhb.take() }
             }
             s => panic!(
                 "State::promote_to_validator: State must be `Observer`. State: {}",
@@ -403,11 +394,11 @@ impl<T: Contribution> State<T> {
             State::GeneratingKeys { .. } => {
                 panic!("FIXME: RESTART KEY GENERATION PROCESS AFTER PEER DISCONNECTS.");
             }
-            State::Observer { qhb: _, .. } => {
+            State::Observer { dhb: _, .. } => {
                 debug!("Ignoring peer disconnection when `State::Observer`.");
                 return;
             }
-            State::Validator { qhb: _, .. } => {
+            State::Validator { dhb: _, .. } => {
                 debug!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             }
@@ -430,19 +421,17 @@ impl<T: Contribution> State<T> {
             State::GeneratingKeys {
                 ref public_keys, ..
             } => NetworkState::GeneratingKeys(peer_infos, public_keys.clone()),
-            State::Observer { ref qhb } | State::Validator { ref qhb } => {
+            State::Observer { ref dhb } | State::Validator { ref dhb } => {
                 // FIXME: Ensure that `peer_info` matches `NetworkInfo` from HB.
-                let pk_set = qhb
+                let pk_set = dhb
                     .as_ref()
                     .unwrap()
-                    .dyn_hb()
                     .netinfo()
                     .public_key_set()
                     .clone();
-                let pk_map = qhb
+                let pk_map = dhb
                     .as_ref()
                     .unwrap()
-                    .dyn_hb()
                     .netinfo()
                     .public_key_map()
                     .clone();
@@ -453,19 +442,19 @@ impl<T: Contribution> State<T> {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn qhb(&self) -> Option<&QueueingHoneyBadger<Vec<T>, Uid>> {
+    pub(super) fn dhb(&self) -> Option<&DynamicHoneyBadger<T, Uid>> {
         match self {
-            State::Observer { ref qhb, .. } => qhb.as_ref(),
-            State::Validator { ref qhb, .. } => qhb.as_ref(),
+            State::Observer { ref dhb, .. } => dhb.as_ref(),
+            State::Validator { ref dhb, .. } => dhb.as_ref(),
             _ => None,
         }
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn qhb_mut(&mut self) -> Option<&mut QueueingHoneyBadger<Vec<T>, Uid>> {
+    pub(super) fn dhb_mut(&mut self) -> Option<&mut DynamicHoneyBadger<T, Uid>> {
         match self {
-            State::Observer { ref mut qhb, .. } => qhb.as_mut(),
-            State::Validator { ref mut qhb, .. } => qhb.as_mut(),
+            State::Observer { ref mut dhb, .. } => dhb.as_mut(),
+            State::Validator { ref mut dhb, .. } => dhb.as_mut(),
             _ => None,
         }
     }
@@ -473,11 +462,11 @@ impl<T: Contribution> State<T> {
     /// Presents input to HoneyBadger or queues it for later.
     ///
     /// Cannot be called while disconnected or connection-pending.
-    pub(super) fn input(&mut self, input: Input<T>) -> Option<Result<Step<T>, QhbError>> {
+    pub(super) fn input(&mut self, input: Input<T>) -> Option<Result<Step<T>, DhbError>> {
         match self {
-            State::Observer { ref mut qhb, .. } | State::Validator { ref mut qhb, .. } => {
+            State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
                 trace!("State::input: Inputting: {:?}", input);
-                let step_opt = Some(qhb.as_mut().unwrap().handle_input(input));
+                let step_opt = Some(dhb.as_mut().unwrap().handle_input(input));
 
                 match step_opt {
                     Some(ref step) => match step {
@@ -514,11 +503,11 @@ impl<T: Contribution> State<T> {
         &mut self,
         src_uid: &Uid,
         msg: Message,
-    ) -> Option<Result<Step<T>, QhbError>> {
+    ) -> Option<Result<Step<T>, DhbError>> {
         match self {
-            State::Observer { ref mut qhb, .. } | State::Validator { ref mut qhb, .. } => {
+            State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
                 trace!("State::handle_message: Handling message: {:?}", msg);
-                let step_opt = Some(qhb.as_mut().unwrap().handle_message(src_uid, msg));
+                let step_opt = Some(dhb.as_mut().unwrap().handle_message(src_uid, msg));
 
                 match step_opt {
                     Some(ref step) => match step {

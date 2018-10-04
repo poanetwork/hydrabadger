@@ -71,9 +71,9 @@ use uuid::Uuid;
 // use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{JoinPlan, Message as DhbMessage},
+    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Input as DhbInput},
     messaging::Step as MessagingStep,
-    queueing_honey_badger::{Input as QhbInput, QueueingHoneyBadger},
+    // queueing_honey_badger::{Input as QhbInput},
     sync_key_gen::{Ack, Part},
     traits::Contribution as HbbftContribution,
 };
@@ -102,11 +102,11 @@ type InternalRx<T> = mpsc::UnboundedReceiver<InternalMessage<T>>;
 
 /// Transmit half of the batch output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type BatchTx<T> = mpsc::UnboundedSender<Batch<Vec<Vec<T>>, Uid>>;
+type BatchTx<T> = mpsc::UnboundedSender<Batch<T, Uid>>;
 
 /// Receive half of the batch output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-pub type BatchRx<T> = mpsc::UnboundedReceiver<Batch<Vec<Vec<T>>, Uid>>;
+pub type BatchRx<T> = mpsc::UnboundedReceiver<Batch<T, Uid>>;
 
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
@@ -146,8 +146,8 @@ impl fmt::Debug for Uid {
 }
 
 type Message = DhbMessage<Uid>;
-type Step<T> = MessagingStep<QueueingHoneyBadger<Vec<T>, Uid>>;
-type Input<T> = QhbInput<Vec<T>, Uid>;
+type Step<T> = MessagingStep<DynamicHoneyBadger<T, Uid>>;
+type Input<T> = DhbInput<T, Uid>;
 
 /// A peer's incoming (listening) address.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -213,7 +213,7 @@ pub enum WireMessageKind<T> {
     #[serde(with = "serde_bytes")]
     Bytes(Bytes),
     Message(Uid, Message),
-    Transactions(Uid, Vec<T>),
+    Transaction(Uid, T),
     KeyGenPart(Part),
     KeyGenAck(Ack),
     JoinPlan(JoinPlan<Uid>), // TargetedMessage(TargetedMessage<Uid>)
@@ -258,9 +258,9 @@ impl<T: Contribution> WireMessage<T> {
     }
 
     /// Returns an `Input` variant.
-    pub fn transaction(src_uid: Uid, txns: Vec<T>) -> WireMessage<T> {
+    pub fn transaction(src_uid: Uid, txn: T) -> WireMessage<T> {
         WireMessage {
-            kind: WireMessageKind::Transactions(src_uid, txns),
+            kind: WireMessageKind::Transaction(src_uid, txn),
         }
     }
 
