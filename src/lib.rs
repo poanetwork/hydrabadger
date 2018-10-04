@@ -357,7 +357,7 @@ impl<T: Contribution> Sink for WireMessages<T> {
         //
         // Original: `bincode::serialize(&item)`
         //
-        match bincode::serialize(&item, bincode::Bounded(1 << 20)) {
+        match bincode::serialize(&item) {
             Ok(s) => serialized.extend_from_slice(&s),
             Err(err) => return Err(Error::Io(io::Error::new(io::ErrorKind::Other, err))),
         }
