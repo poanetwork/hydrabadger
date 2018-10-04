@@ -16,6 +16,7 @@ use hbbft::{
 };
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
+use rand;
 use {Contribution, Input, Message, NetworkNodeInfo, NetworkState, Step, Uid};
 
 /// A `State` discriminant.
@@ -179,13 +180,15 @@ impl<T: Contribution> State<T> {
                 let pk = local_sk.public_key();
                 public_keys.insert(*local_uid, pk);
 
+                let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
+
                 let (mut sync_key_gen, opt_part) =
-                    SyncKeyGen::new(*local_uid, local_sk, public_keys.clone(), threshold)
+                    SyncKeyGen::new(&mut rng, *local_uid, local_sk, public_keys.clone(), threshold)
                         .map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
                 info!("KEY GENERATION: Handling our own `Part`...");
-                ack = match sync_key_gen.handle_part(&local_uid, part.clone()) {
+                ack = match sync_key_gen.handle_part(&mut rng, &local_uid, part.clone()) {
                     Some(PartOutcome::Valid(ack)) => ack,
                     Some(PartOutcome::Invalid(faults)) => panic!(
                         "Invalid part \

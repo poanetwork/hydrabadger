@@ -25,6 +25,7 @@ use {
     Contribution, InAddr, Input, InternalMessage, InternalMessageKind, InternalRx, Message,
     NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
 };
+use rand;
 
 /// Hydrabadger event (internal message) handler.
 pub struct Handler<T: Contribution> {
@@ -230,8 +231,9 @@ impl<T: Contribution> Handler<T> {
             } => {
                 // TODO: Move this match block into a function somewhere for re-use:
                 info!("KEY GENERATION: Handling part from '{}'...", src_uid);
+                let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
                 let mut skg = sync_key_gen.as_mut().unwrap();
-                let ack = match skg.handle_part(src_uid, part) {
+                let ack = match skg.handle_part(&mut rng, src_uid, part) {
                     Some(PartOutcome::Valid(ack)) => ack,
                     Some(PartOutcome::Invalid(faults)) => panic!(
                         "Invalid part \
