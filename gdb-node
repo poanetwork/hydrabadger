@@ -37,6 +37,8 @@ else
     DIRECTORY="release"
 fi
 
+set -e
+
 cargo build $RELEASE
 
 # printf "\nLimiting process memory limit to 400MiB...\n\n"

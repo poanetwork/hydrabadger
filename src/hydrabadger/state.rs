@@ -10,9 +10,8 @@ use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
     dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan, Error as DhbError},
-    messaging::{DistAlgorithm, NetworkInfo},
-    // queueing_honey_badger::{Error as QhbError, DynamicHoneyBadger},
     sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
+    DistAlgorithm, NetworkInfo,
 };
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
@@ -281,7 +280,7 @@ impl<T: Contribution> State<T> {
         local_sk: SecretKey,
         peers: &Peers<T>,
         cfg: &Config,
-        step_queue: &SegQueue<Step<T>>,
+        _step_queue: &SegQueue<Step<T>>,
     ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
         *self = match self {
@@ -308,9 +307,8 @@ impl<T: Contribution> State<T> {
 
                 let netinfo = NetworkInfo::new(local_uid, sk_share, pk_set, local_sk, node_ids);
 
-                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
-                    .build(netinfo)?;
-                step_queue.push(dhb_step);
+                let dhb = DynamicHoneyBadger::builder()
+                    .build(netinfo);
 
                 info!("");
                 info!("== HONEY BADGER INITIALIZED ==");

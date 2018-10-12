@@ -34,15 +34,6 @@ extern crate serde;
 extern crate serde_bytes;
 extern crate tokio_serde_bincode;
 
-// Config {
-//     batch_size: DEFAULT_BATCH_SIZE,
-//     txn_gen_count: DEFAULT_TXN_GEN_COUNT,
-//     txn_gen_interval: DEFAULT_TXN_GEN_INTERVAL,
-//     txn_bytes: DEFAULT_TXN_BYTES,
-//     keygen_peer_count: DEFAULT_KEYGEN_PEER_COUNT,
-//     output_extra_delay_ms: DEFAULT_OUTPUT_EXTRA_DELAY_MS,
-// }
-
 #[cfg(feature = "nightly")]
 use alloc_system::System;
 
@@ -68,14 +59,12 @@ use std::{
 };
 use tokio::{io, net::TcpStream, prelude::*, codec::{Framed, LengthDelimitedCodec}};
 use uuid::Uuid;
-// use bincode::{serialize, deserialize};
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Input as DhbInput},
-    messaging::Step as MessagingStep,
-    // queueing_honey_badger::{Input as QhbInput},
     sync_key_gen::{Ack, Part},
-    traits::Contribution as HbbftContribution,
+    Step as MessagingStep,
+    Contribution as HbbftContribution,
 };
 
 pub use blockchain::{Blockchain, MiningError};

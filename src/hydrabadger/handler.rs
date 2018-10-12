@@ -13,9 +13,9 @@ use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange, Input as DhbInput},
-    messaging::{DistAlgorithm, Target},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
+    DistAlgorithm, Target
 };
 use peer::Peers;
 use serde::{Deserialize, Serialize};
