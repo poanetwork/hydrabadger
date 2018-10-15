@@ -3,7 +3,7 @@ mod hydrabadger;
 mod state;
 
 use self::handler::Handler;
-use self::state::{State, StateDsct};
+use self::state::State;
 use bincode;
 use hbbft::{
     dynamic_honey_badger::Error as DhbError,
@@ -14,6 +14,7 @@ use std;
 use {Input, Message, Uid};
 
 pub use self::hydrabadger::{Config, Hydrabadger};
+pub use self::state::StateDsct;
 
 // Number of times to attempt wire message re-send.
 pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;

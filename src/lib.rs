@@ -72,6 +72,7 @@ pub use hydrabadger::{Config, Hydrabadger};
 // TODO: Create a separate, library-wide error type.
 pub use hydrabadger::Error;
 pub use hbbft::dynamic_honey_badger::Batch;
+pub use hydrabadger::StateDsct;
 
 /// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):

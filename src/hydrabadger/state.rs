@@ -19,7 +19,7 @@ use rand;
 use {Contribution, Input, Message, NetworkNodeInfo, NetworkState, Step, Uid};
 
 /// A `State` discriminant.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StateDsct {
     Disconnected,
     DeterminingNetworkState,
