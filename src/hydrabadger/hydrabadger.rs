@@ -51,6 +51,9 @@ const DEFAULT_KEYGEN_PEER_COUNT: usize = 2;
 // debugging.
 const DEFAULT_OUTPUT_EXTRA_DELAY_MS: u64 = 0;
 
+/// Hydrabadger configuration options.
+//
+// TODO: Convert to builder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub batch_size: usize,
@@ -60,6 +63,7 @@ pub struct Config {
     pub txn_gen_bytes: usize,
     pub keygen_peer_count: usize,
     pub output_extra_delay_ms: u64,
+    pub start_epoch: u64,
 }
 
 impl Config {
@@ -71,6 +75,7 @@ impl Config {
             txn_gen_bytes: DEFAULT_TXN_GEN_BYTES,
             keygen_peer_count: DEFAULT_KEYGEN_PEER_COUNT,
             output_extra_delay_ms: DEFAULT_OUTPUT_EXTRA_DELAY_MS,
+            start_epoch: 0,
         }
     }
 }
