@@ -181,7 +181,7 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Returns a reference to the inner state.
-    pub(crate) fn state(&self) -> RwLockReadGuard<State<T>> {
+    pub fn state(&self) -> RwLockReadGuard<State<T>> {
         self.inner.state.read()
     }
 

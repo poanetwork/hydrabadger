@@ -67,7 +67,7 @@ impl From<usize> for StateDsct {
 // TODO: Make this into a struct and move the `state_dsct: AtomicUsize` field
 // into it.
 //
-pub(crate) enum State<T: Contribution> {
+pub enum State<T: Contribution> {
     Disconnected {},
     DeterminingNetworkState {
         ack_queue: Option<SegQueue<(Uid, Ack)>>,

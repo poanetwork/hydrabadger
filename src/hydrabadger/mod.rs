@@ -21,7 +21,7 @@ pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
-pub(crate) enum InputOrMessage<T> {
+pub enum InputOrMessage<T> {
     Input(Input<T>),
     Message(Uid, Message),
 }
