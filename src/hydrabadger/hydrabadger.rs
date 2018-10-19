@@ -207,6 +207,10 @@ impl<T: Contribution> Hydrabadger<T> {
         sd
     }
 
+    pub fn is_validator(&self) -> bool {
+        StateDsct::from(self.inner.state_dsct.load(Ordering::Relaxed)) == StateDsct::Validator
+    }
+
     /// Returns a reference to the peers list.
     pub fn peers(&self) -> RwLockReadGuard<Peers<T>> {
         self.inner.peers.read()
