@@ -388,7 +388,7 @@ impl<T: Contribution> Peer<T> {
 // TODO: Keep a separate `HashSet` of validator `OutAddrs` to avoid having to
 // iterate through entire list.
 #[derive(Debug)]
-pub(crate) struct Peers<T: Contribution> {
+pub struct Peers<T: Contribution> {
     peers: HashMap<OutAddr, Peer<T>>,
     out_addrs: HashMap<Uid, OutAddr>,
 }
@@ -532,24 +532,24 @@ impl<T: Contribution> Peers<T> {
     }
 
     /// Returns an Iterator over the list of peers.
-    pub(crate) fn peers(&self) -> HashMapValues<OutAddr, Peer<T>> {
+    pub fn peers(&self) -> HashMapValues<OutAddr, Peer<T>> {
         self.peers.values()
     }
 
     /// Returns an iterator over the list of validators.
-    pub(crate) fn validators(&self) -> impl Iterator<Item = &Peer<T>> {
+    pub fn validators(&self) -> impl Iterator<Item = &Peer<T>> {
         self.peers.values().filter(|p| p.is_validator())
     }
 
     /// Returns the current number of connected peers.
-    pub(crate) fn count_total(&self) -> usize {
+    pub fn count_total(&self) -> usize {
         self.peers.len()
     }
 
     /// Returns the current number of connected and established validators.
     ///
     /// This is semi-expensive (O(n)).
-    pub(crate) fn count_validators(&self) -> usize {
+    pub fn count_validators(&self) -> usize {
         self.validators().count()
     }
 

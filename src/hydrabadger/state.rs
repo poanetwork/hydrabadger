@@ -445,7 +445,7 @@ impl<T: Contribution> State<T> {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn dhb(&self) -> Option<&DynamicHoneyBadger<T, Uid>> {
+    pub fn dhb(&self) -> Option<&DynamicHoneyBadger<T, Uid>> {
         match self {
             State::Observer { ref dhb, .. } => dhb.as_ref(),
             State::Validator { ref dhb, .. } => dhb.as_ref(),

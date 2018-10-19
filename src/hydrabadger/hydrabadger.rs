@@ -208,7 +208,7 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Returns a reference to the peers list.
-    pub(crate) fn peers(&self) -> RwLockReadGuard<Peers<T>> {
+    pub fn peers(&self) -> RwLockReadGuard<Peers<T>> {
         self.inner.peers.read()
     }
 
