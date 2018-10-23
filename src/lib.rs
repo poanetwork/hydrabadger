@@ -68,7 +68,7 @@ use hbbft::{
 };
 
 pub use blockchain::{Blockchain, MiningError};
-pub use hydrabadger::{Config, Hydrabadger};
+pub use hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 // TODO: Create a separate, library-wide error type.
 pub use hydrabadger::Error;
 pub use hbbft::dynamic_honey_badger::Batch;

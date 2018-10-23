@@ -22,7 +22,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -37,8 +37,6 @@ use {
     WireMessages, BatchRx,
 };
 
-// The HoneyBadger batch size.
-const DEFAULT_BATCH_SIZE: usize = 200;
 // The number of random transactions to generate per interval.
 const DEFAULT_TXN_GEN_COUNT: usize = 5;
 // The interval between randomly generated transactions.
@@ -56,7 +54,6 @@ const DEFAULT_OUTPUT_EXTRA_DELAY_MS: u64 = 0;
 // TODO: Convert to builder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    pub batch_size: usize,
     pub txn_gen_count: usize,
     pub txn_gen_interval: u64,
     // TODO: Make this a range:
@@ -69,7 +66,6 @@ pub struct Config {
 impl Config {
     pub fn with_defaults() -> Config {
         Config {
-            batch_size: DEFAULT_BATCH_SIZE,
             txn_gen_count: DEFAULT_TXN_GEN_COUNT,
             txn_gen_interval: DEFAULT_TXN_GEN_INTERVAL,
             txn_gen_bytes: DEFAULT_TXN_GEN_BYTES,
@@ -480,5 +476,31 @@ impl<T: Contribution> Hydrabadger<T> {
 
     pub(super) fn secret_key(&self) -> &SecretKey {
         &self.inner.secret_key
+    }
+
+    pub fn to_weak(&self) -> HydrabadgerWeak<T> {
+        HydrabadgerWeak {
+            inner: Arc::downgrade(&self.inner),
+            handler: Arc::downgrade(&self.handler),
+            batch_rx: Arc::downgrade(&self.batch_rx),
+        }
+    }
+}
+
+pub struct HydrabadgerWeak<T: Contribution> {
+    inner: Weak<Inner<T>>,
+    handler: Weak<Mutex<Option<Handler<T>>>>,
+    batch_rx: Weak<Mutex<Option<BatchRx<T>>>>,
+}
+
+impl<T: Contribution> HydrabadgerWeak<T> {
+    pub fn upgrade(self) -> Option<Hydrabadger<T>> {
+        self.inner.upgrade() .and_then(|inner| {
+            self.handler.upgrade().and_then(|handler| {
+                self.batch_rx.upgrade().and_then(|batch_rx|{
+                    Some(Hydrabadger { inner, handler, batch_rx })
+                })
+            })
+        })
     }
 }

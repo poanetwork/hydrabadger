@@ -136,10 +136,6 @@ fn main() {
 
     let mut cfg = Config::default();
 
-    if let Some(bs) = matches.value_of("batch-size") {
-        cfg.batch_size = bs.parse().expect("Invalid batch size.");
-    }
-
     if let Some(tgc) = matches.value_of("txn-gen-count") {
         cfg.txn_gen_count = tgc.parse().expect("Invalid transaction generation count.");
     }

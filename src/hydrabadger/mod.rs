@@ -13,7 +13,7 @@ use hbbft::{
 use std;
 use {Input, Message, Uid};
 
-pub use self::hydrabadger::{Config, Hydrabadger};
+pub use self::hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 pub use self::state::StateDsct;
 
 // Number of times to attempt wire message re-send.
