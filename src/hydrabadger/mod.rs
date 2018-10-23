@@ -51,7 +51,7 @@ pub enum Error {
     #[fail(display = "Error generating keys: {}", _0)]
     SyncKeyGenGenerate(SyncKeyGenError),
     #[fail(display = "Unable to push user transactions, this node is not a validator")]
-    PushUserContributionNotValidator,
+    ProposeUserContributionNotValidator,
 }
 
 impl From<std::io::Error> for Error {

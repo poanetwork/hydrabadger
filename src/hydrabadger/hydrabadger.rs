@@ -234,7 +234,7 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Handles a incoming batch of user transactions.
-    pub fn push_user_contribution(&self, txn: T) -> Result<(), Error> {
+    pub fn propose_user_contribution(&self, txn: T) -> Result<(), Error> {
         let (dsct, _, _) = self.state_info_stale();
 
         match dsct {
@@ -246,7 +246,7 @@ impl<T: Contribution> Hydrabadger<T> {
                 ));
                 Ok(())
             }
-            _ => Err(Error::PushUserContributionNotValidator),
+            _ => Err(Error::ProposeUserContributionNotValidator),
         }
     }
 
