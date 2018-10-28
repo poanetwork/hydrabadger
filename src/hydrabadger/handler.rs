@@ -14,7 +14,7 @@ use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange, Input as DhbInput},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
-    sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
+    sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     DistAlgorithm, Target
 };
 use peer::Peers;
@@ -193,11 +193,11 @@ impl<T: Contribution> Handler<T> {
         ack_count: &mut usize,
     ) {
         info!("KEY GENERATION: Handling ack from '{}'...", uid);
-        let fault_log = sync_key_gen.handle_ack(uid, ack.clone());
-        if !fault_log.is_empty() {
-            error!("Errors handling ack: '{:?}':\n{:?}", ack, fault_log);
+        let ack_outcome = sync_key_gen.handle_ack(uid, ack.clone()).expect("Failed to handle Ack.");
+        match ack_outcome {
+            AckOutcome::Invalid(fault) => error!("Error handling ack: '{:?}':\n{:?}", ack, fault),
+            AckOutcome::Valid => *ack_count += 1,
         }
-        *ack_count += 1;
     }
 
     fn handle_queued_acks(
@@ -234,14 +234,18 @@ impl<T: Contribution> Handler<T> {
                 let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
                 let mut skg = sync_key_gen.as_mut().unwrap();
                 let ack = match skg.handle_part(&mut rng, src_uid, part) {
-                    Some(PartOutcome::Valid(ack)) => ack,
-                    Some(PartOutcome::Invalid(faults)) => panic!(
+                    Ok(PartOutcome::Valid(Some(ack))) => ack,
+                    Ok(PartOutcome::Invalid(faults)) => panic!(
                         "Invalid part \
                          (FIXME: handle): {:?}",
                         faults
                     ),
-                    None => {
+                    Ok(PartOutcome::Valid(None)) => {
                         error!("`DynamicHoneyBadger::handle_part` returned `None`.");
+                        return;
+                    }
+                    Err(err) => {
+                        error!("Error handling Part: {:?}", err);
                         return;
                     }
                 };

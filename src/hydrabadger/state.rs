@@ -187,14 +187,15 @@ impl<T: Contribution> State<T> {
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
                 info!("KEY GENERATION: Handling our own `Part`...");
-                ack = match sync_key_gen.handle_part(&mut rng, &local_uid, part.clone()) {
-                    Some(PartOutcome::Valid(ack)) => ack,
-                    Some(PartOutcome::Invalid(faults)) => panic!(
+                ack = match sync_key_gen.handle_part(&mut rng, &local_uid, part.clone())
+                                        .expect("Handling our own Part has failed") {
+                    PartOutcome::Valid(Some(ack)) => ack,
+                    PartOutcome::Invalid(faults) => panic!(
                         "Invalid part \
                          (FIXME: handle): {:?}",
                         faults
                     ),
-                    None => unimplemented!(),
+                    PartOutcome::Valid(None) => panic!("No Ack produced when handling Part."),
                 };
 
                 info!("KEY GENERATION: Queueing our own `Ack`...");
