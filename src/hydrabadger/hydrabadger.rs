@@ -235,9 +235,7 @@ impl<T: Contribution> Hydrabadger<T> {
 
     /// Handles a incoming batch of user transactions.
     pub fn propose_user_contribution(&self, txn: T) -> Result<(), Error> {
-        let (dsct, _, _) = self.state_info_stale();
-
-        match dsct {
+        match self.inner.state_dsct.load(Ordering::Relaxed).into() {
             StateDsct::Validator => {
                 self.send_internal(InternalMessage::hb_input(
                     self.inner.uid,
@@ -411,7 +409,7 @@ impl<T: Contribution> Hydrabadger<T> {
 
             Ok(())
         })
-        .map_err(|err| error!("List connection inverval error: {:?}", err))
+        .map_err(|err| error!("List connection interval error: {:?}", err))
     }
 
     /// Binds to a host address and returns a future which starts the node.
