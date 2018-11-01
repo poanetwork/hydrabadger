@@ -764,7 +764,7 @@ impl<T: Contribution> Future for Handler<T> {
             for batch in step.output.drain(..) {
                 info!("A HONEY BADGER BATCH WITH CONTRIBUTIONS IS BEING STREAMED...");
 
-                let batch_epoch = batch.seqnum();
+                let batch_epoch = batch.epoch();
                 let prev_epoch = self.hdb.set_current_epoch(batch_epoch + 1);
                 assert_eq!(prev_epoch, batch_epoch);
 
