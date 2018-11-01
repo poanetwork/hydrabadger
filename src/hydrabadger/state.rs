@@ -238,7 +238,7 @@ impl<T: Contribution> State<T> {
                 ref mut iom_queue, ..
             } => {
                 let (dhb, dhb_step) = DynamicHoneyBadger::builder()
-                    .epoch(cfg.start_epoch)
+                    .era(cfg.start_epoch)
                     .build_joining(local_uid, local_sk, jp)?;
                 step_queue.push(dhb_step);
 
@@ -310,7 +310,7 @@ impl<T: Contribution> State<T> {
                 let netinfo = NetworkInfo::new(local_uid, sk_share, pk_set, local_sk, node_ids);
 
                 let dhb = DynamicHoneyBadger::builder()
-                    .epoch(cfg.start_epoch)
+                    .era(cfg.start_epoch)
                     .build(netinfo);
 
                 info!("");

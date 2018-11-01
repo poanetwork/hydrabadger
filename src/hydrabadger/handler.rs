@@ -15,7 +15,7 @@ use hbbft::{
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange, Input as DhbInput},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
-    DistAlgorithm, Target
+    DistAlgorithm, Target, Epoched,
 };
 use peer::Peers;
 use serde::{Deserialize, Serialize};
@@ -764,7 +764,7 @@ impl<T: Contribution> Future for Handler<T> {
             for batch in step.output.drain(..) {
                 info!("A HONEY BADGER BATCH WITH CONTRIBUTIONS IS BEING STREAMED...");
 
-                let batch_epoch = batch.epoch();
+                let batch_epoch = batch.seqnum();
                 let prev_epoch = self.hdb.set_current_epoch(batch_epoch + 1);
                 assert_eq!(prev_epoch, batch_epoch);
 
