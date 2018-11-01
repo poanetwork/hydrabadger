@@ -98,6 +98,16 @@ type BatchTx<T> = mpsc::UnboundedSender<Batch<T, Uid>>;
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 pub type BatchRx<T> = mpsc::UnboundedReceiver<Batch<T, Uid>>;
 
+/// Transmit half of the epoch number output channel.
+// TODO: Use a bounded tx/rx (find a sensible upper bound):
+type EpochTx = mpsc::UnboundedSender<u64>;
+
+/// Receive half of the epoch number output channel.
+// TODO: Use a bounded tx/rx (find a sensible upper bound):
+pub type EpochRx = mpsc::UnboundedReceiver<u64>;
+
+
+
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
 {

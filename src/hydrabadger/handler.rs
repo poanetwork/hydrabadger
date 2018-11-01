@@ -760,7 +760,12 @@ impl<T: Contribution> Future for Handler<T> {
             for batch in step.output.drain(..) {
                 info!("A HONEY BADGER BATCH WITH CONTRIBUTIONS IS BEING STREAMED...");
 
-                if cfg!(exit_upon_epoch_1000) && batch.epoch() >= 1000 {
+                let batch_epoch = batch.epoch();
+                let prev_epoch = self.hdb.set_current_epoch(batch_epoch + 1);
+                assert_eq!(prev_epoch, batch_epoch);
+
+                // TODO: Remove
+                if cfg!(exit_upon_epoch_1000) && batch_epoch >= 1000 {
                     return Ok(Async::Ready(()));
                 }
 
@@ -798,6 +803,17 @@ impl<T: Contribution> Future for Handler<T> {
                     if let Err(err) = self.batch_tx.unbounded_send(batch) {
                         error!("Unable to send batch output. Shutting down...");
                         return Ok(Async::Ready(()));
+                    } else {
+                        // Notify epoch listeners that a batch has been output.
+                        let mut dropped_listeners = Vec::new();
+                        for (i, listener) in self.hdb.epoch_listeners().iter().enumerate() {
+                            if let Err(err) = listener.unbounded_send(batch_epoch + 1) {
+                                dropped_listeners.push(i);
+                                error!("Epoch listener {} has dropped.", i);
+                            }
+                        }
+                        // TODO: Remove dropped listeners from the list (see
+                        // comment on `Inner::epoch_listeners`).
                     }
                 } else {
                     info!("Batch output receiver dropped. Shutting down...");
