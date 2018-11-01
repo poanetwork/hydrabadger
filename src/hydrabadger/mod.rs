@@ -52,6 +52,8 @@ pub enum Error {
     SyncKeyGenGenerate(SyncKeyGenError),
     #[fail(display = "Unable to push user transactions, this node is not a validator")]
     ProposeUserContributionNotValidator,
+    #[fail(display = "Unable to transmit epoch status to listener, listener receiver dropped")]
+    InstantiateHbListenerDropped,
 }
 
 impl From<std::io::Error> for Error {

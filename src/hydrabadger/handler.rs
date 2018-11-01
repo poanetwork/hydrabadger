@@ -393,6 +393,10 @@ impl<T: Contribution> Handler<T> {
                         )?);
                     }
                 }
+                for l in self.hdb.epoch_listeners().iter() {
+                    l.unbounded_send(self.hdb.current_epoch())
+                        .map_err(|_| Error::InstantiateHbListenerDropped)?;
+                }
             }
             StateDsct::AwaitingMorePeersForKeyGeneration => unimplemented!(),
             StateDsct::Observer => {
