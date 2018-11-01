@@ -396,7 +396,7 @@ impl<T: Contribution> Hydrabadger<T> {
     /// messages.
     fn generate_txns_status(
         self,
-        gen_txns: Option<fn(usize, usize) -> Vec<T>>,
+        gen_txns: Option<fn(usize, usize) -> T>,
     ) -> impl Future<Item = (), Error = ()> {
         Interval::new(
             Instant::now(),
@@ -443,13 +443,11 @@ impl<T: Contribution> Hydrabadger<T> {
                             self.inner.config.txn_gen_bytes,
                         );
 
-                        for txn in txns {
-                            hdb.send_internal(InternalMessage::hb_input(
-                                hdb.inner.uid,
-                                OutAddr(*hdb.inner.addr),
-                                DhbInput::User(txn),
-                            ));
-                        }
+                        hdb.send_internal(InternalMessage::hb_input(
+                            hdb.inner.uid,
+                            OutAddr(*hdb.inner.addr),
+                            DhbInput::User(txns),
+                        ));
                     }
                     _ => {}
                 }
@@ -464,7 +462,7 @@ impl<T: Contribution> Hydrabadger<T> {
     pub fn node(
         self,
         remotes: Option<HashSet<SocketAddr>>,
-        gen_txns: Option<fn(usize, usize) -> Vec<T>>,
+        gen_txns: Option<fn(usize, usize) -> T>,
     ) -> impl Future<Item = (), Error = ()> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
@@ -507,7 +505,7 @@ impl<T: Contribution> Hydrabadger<T> {
     pub fn run_node(
         self,
         remotes: Option<HashSet<SocketAddr>>,
-        gen_txns: Option<fn(usize, usize) -> Vec<T>>,
+        gen_txns: Option<fn(usize, usize) -> T>,
     ) {
         tokio::run(self.node(remotes, gen_txns));
     }
