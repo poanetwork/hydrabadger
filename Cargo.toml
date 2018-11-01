@@ -54,8 +54,8 @@ clear_on_drop = "0.2"
 version = "*"
 # git = "https://github.com/c0gent/hbbft"
 git = "https://github.com/poanetwork/hbbft"
-# branch = "c0gent-rng-sync"
-branch = "master"
+# branch = "master"
+branch = "vk-extern-sender-queue"
 # path = "../hbbft"
 
 [profile.release]
