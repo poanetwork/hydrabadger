@@ -12,7 +12,8 @@ use super::{Error, Hydrabadger, InputOrMessage, State, StateDsct};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange, Input as DhbInput},
+    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange,
+                           Input as DhbInput, NodeChange},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     DistAlgorithm, Target, Epoched,
@@ -145,7 +146,13 @@ impl<T: Contribution> Handler<T> {
                     let dhb = state.dhb_mut().unwrap();
                     info!("Change-Adding ('{}') to honey badger.", src_uid);
                     let step = dhb
-                        .handle_input(DhbInput::Change(DhbChange::Add(src_uid, src_pk)))
+                        .handle_input(
+                            DhbInput::Change(
+                                DhbChange::NodeChange(
+                                    NodeChange::Add(src_uid, src_pk)
+                                )
+                            )
+                        )
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
                 }
@@ -525,14 +532,26 @@ impl<T: Contribution> Handler<T> {
                 let step = dhb
                     .as_mut()
                     .unwrap()
-                    .handle_input(DhbInput::Change(DhbChange::Remove(src_uid)))?;
+                    .handle_input(
+                        DhbInput::Change(
+                            DhbChange::NodeChange(
+                                NodeChange::Remove(src_uid)
+                            )
+                        )
+                    )?;
                 self.step_queue.push(step);
             }
             State::Validator { ref mut dhb } => {
                 let step = dhb
                     .as_mut()
                     .unwrap()
-                    .handle_input(DhbInput::Change(DhbChange::Remove(src_uid)))?;
+                    .handle_input(
+                        DhbInput::Change(
+                            DhbChange::NodeChange(
+                                NodeChange::Remove(src_uid)
+                            )
+                        )
+                    )?;
                 self.step_queue.push(step);
             }
         }
@@ -783,7 +802,7 @@ impl<T: Contribution> Future for Handler<T> {
                     ChangeState::None => {}
                     ChangeState::InProgress(_change) => {}
                     ChangeState::Complete(change) => match change {
-                        DhbChange::Add(uid, pk) => {
+                        DhbChange::NodeChange(NodeChange::Add(uid, pk)) => {
                             if uid == self.hdb.uid() {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
                                 assert!(state.dhb().unwrap().netinfo().is_validator());
@@ -791,7 +810,10 @@ impl<T: Contribution> Future for Handler<T> {
                                 self.hdb.set_state_discriminant(state.discriminant());
                             }
                         }
-                        DhbChange::Remove(uid) => {}
+                        // FIXME
+                        DhbChange::NodeChange(NodeChange::Remove(_uid)) => {}
+                        // FIXME
+                        DhbChange::EncryptionSchedule(_schedule) => {}
                     },
                 }
 
