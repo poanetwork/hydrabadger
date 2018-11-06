@@ -16,7 +16,7 @@ use hbbft::{
                            Input as DhbInput, NodeChange},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
-    DistAlgorithm, Target, Epoched,
+    Target, Epoched,
 };
 use peer::Peers;
 use serde::{Deserialize, Serialize};
