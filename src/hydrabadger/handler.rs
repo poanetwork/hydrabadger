@@ -145,14 +145,7 @@ impl<T: Contribution> Handler<T> {
                 if request_change_add {
                     let dhb = state.dhb_mut().unwrap();
                     info!("Change-Adding ('{}') to honey badger.", src_uid);
-                    let step = dhb
-                        .handle_input(
-                            DhbInput::Change(
-                                DhbChange::NodeChange(
-                                    NodeChange::Add(src_uid, src_pk)
-                                )
-                            )
-                        )
+                    let step = dhb.vote_to_add(src_uid, src_pk)
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
                 }
@@ -529,29 +522,11 @@ impl<T: Contribution> Handler<T> {
             }
             State::Observer { ref mut dhb } => {
                 // Do nothing instead?
-                let step = dhb
-                    .as_mut()
-                    .unwrap()
-                    .handle_input(
-                        DhbInput::Change(
-                            DhbChange::NodeChange(
-                                NodeChange::Remove(src_uid)
-                            )
-                        )
-                    )?;
+                let step = dhb.as_mut().unwrap().vote_to_remove(src_uid)?;
                 self.step_queue.push(step);
             }
             State::Validator { ref mut dhb } => {
-                let step = dhb
-                    .as_mut()
-                    .unwrap()
-                    .handle_input(
-                        DhbInput::Change(
-                            DhbChange::NodeChange(
-                                NodeChange::Remove(src_uid)
-                            )
-                        )
-                    )?;
+                let step = dhb.as_mut().unwrap().vote_to_remove(src_uid)?;
                 self.step_queue.push(step);
             }
         }
