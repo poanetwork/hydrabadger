@@ -53,7 +53,7 @@ impl<T: Contribution> PeerHandler<T> {
         // Create a channel for this peer
         let (tx, rx) = mpsc::unbounded();
 
-        let uid = pub_info.as_ref().map(|(uid, _, _)| uid.clone());
+        let uid = pub_info.as_ref().map(|(uid, _, _)| *uid);
 
         // Add an entry for this `Peer` in the shared state map.
         hdb.peers_mut().add(out_addr, tx, pub_info);
@@ -150,7 +150,7 @@ impl<T: Contribution> Future for PeerHandler<T> {
                         ))
                     }
                     kind => self.hdb.send_internal(InternalMessage::wire(
-                        self.uid.clone(),
+                        self.uid,
                         self.out_addr,
                         kind.into(),
                     )),
@@ -170,16 +170,16 @@ impl<T: Contribution> Drop for PeerHandler<T> {
         debug!(
             "Removing peer ({}: '{}') from the list of peers.",
             self.out_addr,
-            self.uid.clone().unwrap()
+            self.uid.unwrap()
         );
         // Remove peer transmitter from the lists:
         self.hdb.peers_mut().remove(&self.out_addr);
 
-        if let Some(uid) = self.uid.clone() {
+        if let Some(uid) = self.uid {
             debug!(
                 "Sending peer ({}: '{}') disconnect internal message.",
                 self.out_addr,
-                self.uid.clone().unwrap()
+                self.uid.unwrap()
             );
 
             self.hdb
@@ -281,7 +281,7 @@ impl<T: Contribution> Peer<T> {
                 }
             },
             State::EstablishedObserver { uid, in_addr, pk } => {
-                if let Some(_) = pub_info {
+                if pub_info.is_some() {
                     panic!(
                         "Peer::establish_validator: `pub_info` must be `None` \
                          when upgrading an observer node."

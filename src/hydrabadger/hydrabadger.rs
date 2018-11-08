@@ -196,8 +196,7 @@ impl<T: Contribution> Hydrabadger<T> {
 
     /// Returns a mutable reference to the inner state.
     pub(crate) fn state_mut(&self) -> RwLockWriteGuard<State<T>> {
-        let state = self.inner.state.write();
-        state
+        self.inner.state.write()
     }
 
     /// Sets the publicly visible state discriminant and returns the previous value.
@@ -359,7 +358,7 @@ impl<T: Contribution> Hydrabadger<T> {
         pub_info: Option<(Uid, InAddr, PublicKey)>,
         is_optimistic: bool,
     ) -> impl Future<Item = (), Error = ()> {
-        let uid = self.inner.uid.clone();
+        let uid = self.inner.uid;
         let in_addr = self.inner.addr;
 
         info!("Initiating outgoing connection to: {}", remote_addr);
@@ -409,25 +408,22 @@ impl<T: Contribution> Hydrabadger<T> {
                 .for_each(move |_epoch_no| {
                     let hdb = self.clone();
 
-                    match hdb.state_info_stale().0 {
-                        StateDsct::Validator => {
-                            info!(
-                                "Generating and inputting {} random transactions...",
-                                self.inner.config.txn_gen_count
-                            );
-                            // Send some random transactions to our internal HB instance.
-                            let txns = gen_txns(
-                                self.inner.config.txn_gen_count,
-                                self.inner.config.txn_gen_bytes,
-                            );
+                    if let StateDsct::Validator = hdb.state_info_stale().0 {
+                        info!(
+                            "Generating and inputting {} random transactions...",
+                            self.inner.config.txn_gen_count
+                        );
+                        // Send some random transactions to our internal HB instance.
+                        let txns = gen_txns(
+                            self.inner.config.txn_gen_count,
+                            self.inner.config.txn_gen_bytes,
+                        );
 
-                            hdb.send_internal(InternalMessage::hb_input(
-                                hdb.inner.uid,
-                                OutAddr(*hdb.inner.addr),
-                                DhbInput::User(txns),
-                            ));
-                        }
-                        _ => {}
+                        hdb.send_internal(InternalMessage::hb_input(
+                            hdb.inner.uid,
+                            OutAddr(*hdb.inner.addr),
+                            DhbInput::User(txns),
+                        ));
                     }
                     Ok(())
                 })
@@ -489,7 +485,7 @@ impl<T: Contribution> Hydrabadger<T> {
         let socket = TcpListener::bind(&self.inner.addr).unwrap();
         info!("Listening on: {}", self.inner.addr);
 
-        let remotes = remotes.unwrap_or(HashSet::new());
+        let remotes = remotes.unwrap_or_default();
 
         let hdb = self.clone();
         let listen = socket

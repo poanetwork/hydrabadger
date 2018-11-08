@@ -104,9 +104,9 @@ impl Transaction {
 fn main() {
     env_logger::Builder::new()
         .format(|buf, record| {
-            write!(
+            writeln!(
                 buf,
-                "{} [{}]: {}\n",
+                "{} [{}]: {}",
                 Local::now().format("%Y-%m-%dT%H:%M:%S"),
                 record.level(),
                 record.args()

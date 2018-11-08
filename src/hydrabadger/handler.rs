@@ -514,7 +514,7 @@ impl<T: Contribution> Handler<T> {
             }
             State::AwaitingMorePeersForKeyGeneration { .. } => {
                 // info!("Removing peer ({}: '{}') from await list.",
-                //     src_out_addr, src_uid.clone().unwrap());
+                //     src_out_addr, src_uid.unwrap());
                 // state.peer_connection_dropped(&*self.hdb.peers());
             }
             State::GeneratingKeys { .. } => {
@@ -575,7 +575,7 @@ impl<T: Contribution> Handler<T> {
                     .unwrap()
                     .tx()
                     .unbounded_send(WireMessage::welcome_received_change_add(
-                        self.hdb.uid().clone(),
+                        *self.hdb.uid(),
                         self.hdb.secret_key().public_key(),
                         net_state,
                     ))
@@ -613,7 +613,7 @@ impl<T: Contribution> Handler<T> {
             }
 
             InternalMessageKind::PeerDisconnect => {
-                let dropped_src_uid = src_uid.clone().unwrap();
+                let dropped_src_uid = src_uid.unwrap();
                 info!(
                     "Peer disconnected: ({}: '{}').",
                     src_out_addr, dropped_src_uid
@@ -637,7 +637,7 @@ impl<T: Contribution> Handler<T> {
                     match peers
                         .establish_validator(src_out_addr, (src_uid_new, src_in_addr, src_pk))
                     {
-                        true => debug_assert!(src_uid_new == src_uid.clone().unwrap()),
+                        true => debug_assert!(src_uid_new == src_uid.unwrap()),
                         false => debug_assert!(src_uid.is_none()),
                     }
 
@@ -648,7 +648,7 @@ impl<T: Contribution> Handler<T> {
                 // New outgoing connection:
                 WireMessageKind::WelcomeReceivedChangeAdd(src_uid_new, src_pk, net_state) => {
                     debug!("Received NetworkState: \n{:?}", net_state);
-                    assert!(src_uid_new == src_uid.clone().unwrap());
+                    assert!(src_uid_new == src_uid.unwrap());
                     let mut peers = self.hdb.peers_mut();
 
                     // Set new (outgoing-connection) peer's public info:
@@ -691,7 +691,7 @@ impl<T: Contribution> Handler<T> {
                     self.handle_join_plan(jp, state, &peers)?;
                 }
 
-                wm @ _ => warn!(
+                wm => warn!(
                     "hydrabadger::Handler::handle_internal_message: Unhandled wire message: \
                      \n{:?}",
                     wm,
