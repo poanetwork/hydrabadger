@@ -1,5 +1,9 @@
 #![cfg_attr(feature = "nightly", feature(alloc_system))]
 #![cfg_attr(feature = "nightly", feature(proc_macro))]
+#![cfg_attr(feature = "cargo-clippy",
+            allow(large_enum_variant, new_without_default_derive, expect_fun_call, or_fun_call,
+                  useless_format, cyclomatic_complexity, needless_pass_by_value, module_inception,
+                  match_bool))]
 
 #[cfg(feature = "nightly")]
 extern crate alloc_system;
@@ -63,7 +67,7 @@ use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Input as DhbInput},
     sync_key_gen::{Ack, Part},
-    Step as MessagingStep,
+    DaStep as MessagingStep,
     Contribution as HbbftContribution,
 };
 

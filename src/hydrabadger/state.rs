@@ -398,11 +398,11 @@ impl<T: Contribution> State<T> {
             State::GeneratingKeys { .. } => {
                 panic!("FIXME: RESTART KEY GENERATION PROCESS AFTER PEER DISCONNECTS.");
             }
-            State::Observer { dhb: _, .. } => {
+            State::Observer { .. } => {
                 debug!("Ignoring peer disconnection when `State::Observer`.");
                 return;
             }
-            State::Validator { dhb: _, .. } => {
+            State::Validator { .. } => {
                 debug!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             }

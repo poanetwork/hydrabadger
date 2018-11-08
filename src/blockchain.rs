@@ -133,7 +133,7 @@ impl Block {
 
     /// Returns this block's hash.
     pub fn hash(&self) -> Option<Sha256Hash> {
-        self.hash.clone()
+        self.hash
     }
 
     /// Returns this block's hash.
