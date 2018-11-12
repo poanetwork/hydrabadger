@@ -15,6 +15,8 @@ path = "src/bin/peer_node.rs"
 [features]
 # Used for debugging memory usage.
 exit_upon_epoch_1000 = []
+# Disables SIMD in reed-solomon-erasure, which currently doesn't work on Android.
+no-simd = ["hbbft/no-simd"]
 
 
 [dependencies]
