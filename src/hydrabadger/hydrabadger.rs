@@ -33,8 +33,8 @@ use tokio::{
     timer::{Interval, Delay},
 };
 use {
-    Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage, WireMessageKind,
-    WireMessages, BatchRx, EpochTx, EpochRx,
+    Change, Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage,
+    WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx,
 };
 
 // The number of random transactions to generate per interval.
@@ -286,14 +286,28 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Handles a incoming batch of user transactions.
     pub fn propose_user_contribution(&self, txn: T) -> Result<(), Error> {
         if self.is_validator() {
-            self.send_internal(InternalMessage::hb_input(
+            self.send_internal(InternalMessage::hb_contribution(
                 self.inner.uid,
                 OutAddr(*self.inner.addr),
-                DhbInput::User(txn),
+                txn,
             ));
             Ok(())
         } else {
             Err(Error::ProposeUserContributionNotValidator)
+        }
+    }
+
+    /// Casts a vote for a change in the validator set or configuration.
+    pub fn vote_for(&self, change: Change) -> Result<(), Error> {
+        if self.is_validator() {
+            self.send_internal(InternalMessage::hb_vote(
+                self.inner.uid,
+                OutAddr(*self.inner.addr),
+                change,
+            ));
+            Ok(())
+        } else {
+            Err(Error::VoteForNotValidator)
         }
     }
 
@@ -419,10 +433,10 @@ impl<T: Contribution> Hydrabadger<T> {
                             self.inner.config.txn_gen_bytes,
                         );
 
-                        hdb.send_internal(InternalMessage::hb_input(
+                        hdb.send_internal(InternalMessage::hb_contribution(
                             hdb.inner.uid,
                             OutAddr(*hdb.inner.addr),
-                            DhbInput::User(txns),
+                            txns,
                         ));
                     }
                     Ok(())

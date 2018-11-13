@@ -13,8 +13,7 @@ use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange,
-                           Input as DhbInput, NodeChange},
-    // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
+                           NodeChange},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     Target, Epoched,
 };
@@ -23,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tokio::{self, prelude::*};
 use {
-    Contribution, InAddr, Input, InternalMessage, InternalMessageKind, InternalRx, Message,
+    Change, Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx, Message,
     NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
 };
 use rand;
@@ -154,31 +153,10 @@ impl<T: Contribution> Handler<T> {
         Ok(())
     }
 
-    fn handle_input(&self, input: Input<T>, state: &mut State<T>) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to input....");
-        if let Some(step_res) = state.input(input) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger input error: {:?}", err);
-                Error::HbStepError
-            })?;
-            trace!("hydrabadger::Handler: Input step result added to queue....");
-            self.step_queue.push(step);
-        }
-        Ok(())
-    }
-
-    fn handle_message(
-        &self,
-        msg: Message,
-        src_uid: &Uid,
-        state: &mut State<T>,
-    ) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to handle_message: {:?}", msg);
-        if let Some(step_res) = state.handle_message(src_uid, msg) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger handle_message error: {:?}", err);
-                Error::HbStepError
-            })?;
+    fn handle_iom(&self, iom: InputOrMessage<T>, state: &mut State<T>) -> Result<(), Error> {
+        trace!("hydrabadger::Handler: About to handle_iom: {:?}", iom);
+        if let Some(step_res) = state.handle_iom(iom) {
+            let step = step_res.map_err(Error::HbStep)?;
             trace!("hydrabadger::Handler: Message step result added to queue....");
             self.step_queue.push(step);
         }
@@ -416,14 +394,7 @@ impl<T: Contribution> Handler<T> {
         // Handle previously queued input and messages:
         if let Some(iom_queue) = iom_queue_opt {
             while let Some(iom) = iom_queue.try_pop() {
-                match iom {
-                    InputOrMessage::Input(input) => {
-                        self.handle_input(input, state)?;
-                    }
-                    InputOrMessage::Message(uid, msg) => {
-                        self.handle_message(msg, &uid, state)?;
-                    }
-                }
+                self.handle_iom(iom, state)?;
             }
         }
         Ok(())
@@ -604,12 +575,16 @@ impl<T: Contribution> Handler<T> {
                 self.hdb.set_state_discriminant(state.discriminant());
             }
 
-            InternalMessageKind::HbInput(input) => {
-                self.handle_input(input, state)?;
+            InternalMessageKind::HbContribution(contrib) => {
+                self.handle_iom(InputOrMessage::Contribution(contrib), state)?;
+            }
+
+            InternalMessageKind::HbChange(change) => {
+                self.handle_iom(InputOrMessage::Change(change), state)?;
             }
 
             InternalMessageKind::HbMessage(msg) => {
-                self.handle_message(msg, src_uid.as_ref().unwrap(), state)?;
+                self.handle_iom(InputOrMessage::Message(src_uid.unwrap(), msg), state)?;
             }
 
             InternalMessageKind::PeerDisconnect => {

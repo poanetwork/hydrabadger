@@ -7,11 +7,10 @@ use self::state::State;
 use bincode;
 use hbbft::{
     dynamic_honey_badger::Error as DhbError,
-    // queueing_honey_badger::Error as QhbError,
     sync_key_gen::Error as SyncKeyGenError,
 };
 use std;
-use {Input, Message, Uid};
+use {Change, Message, Uid};
 
 pub use self::hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 pub use self::state::StateDsct;
@@ -22,7 +21,8 @@ pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
 pub enum InputOrMessage<T> {
-    Input(Input<T>),
+    Change(Change),
+    Contribution(T),
     Message(Uid, Message),
 }
 
@@ -34,24 +34,18 @@ pub enum Error {
     Serde(bincode::Error),
     #[fail(display = "Error polling hydrabadger internal receiver")]
     HydrabadgerHandlerPoll,
-    // FIXME: Make honeybadger error thread safe.
-    #[fail(display = "QueuingHoneyBadger propose error")]
-    QhbPart,
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "DynamicHoneyBadger error")]
-    Dhb(()),
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
-    #[fail(display = "QueuingHoneyBadger error [FIXME]")]
-    Qhb(()),
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
-    #[fail(display = "QueuingHoneyBadger step error")]
-    HbStepError,
+    Dhb(DhbError),
+    #[fail(display = "DynamicHoneyBadger step error")]
+    HbStep(DhbError),
     #[fail(display = "Error creating SyncKeyGen: {}", _0)]
     SyncKeyGenNew(SyncKeyGenError),
     #[fail(display = "Error generating keys: {}", _0)]
     SyncKeyGenGenerate(SyncKeyGenError),
     #[fail(display = "Unable to push user transactions, this node is not a validator")]
     ProposeUserContributionNotValidator,
+    #[fail(display = "Unable to vote for a change, this node is not a validator")]
+    VoteForNotValidator,
     #[fail(display = "Unable to transmit epoch status to listener, listener receiver dropped")]
     InstantiateHbListenerDropped,
 }
@@ -63,7 +57,7 @@ impl From<std::io::Error> for Error {
 }
 
 impl From<DhbError> for Error {
-    fn from(_err: DhbError) -> Error {
-        Error::Dhb(())
+    fn from(err: DhbError) -> Error {
+        Error::Dhb(err)
     }
 }
