@@ -34,18 +34,10 @@ pub enum Error {
     Serde(bincode::Error),
     #[fail(display = "Error polling hydrabadger internal receiver")]
     HydrabadgerHandlerPoll,
-    // FIXME: Make honeybadger error thread safe.
-    #[fail(display = "QueuingHoneyBadger propose error")]
-    QhbPart,
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
     #[fail(display = "DynamicHoneyBadger error")]
-    Dhb(()),
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
-    #[fail(display = "QueuingHoneyBadger error [FIXME]")]
-    Qhb(()),
-    /// TEMPORARY UNTIL WE FIX HB ERROR TYPES:
-    #[fail(display = "QueuingHoneyBadger step error")]
-    HbStepError,
+    Dhb(DhbError),
+    #[fail(display = "DynamicHoneyBadger step error")]
+    HbStep(DhbError),
     #[fail(display = "Error creating SyncKeyGen: {}", _0)]
     SyncKeyGenNew(SyncKeyGenError),
     #[fail(display = "Error generating keys: {}", _0)]
@@ -65,7 +57,7 @@ impl From<std::io::Error> for Error {
 }
 
 impl From<DhbError> for Error {
-    fn from(_err: DhbError) -> Error {
-        Error::Dhb(())
+    fn from(err: DhbError) -> Error {
+        Error::Dhb(err)
     }
 }

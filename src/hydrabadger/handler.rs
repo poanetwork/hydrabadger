@@ -14,7 +14,6 @@ use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange,
                            NodeChange},
-    // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     Target, Epoched,
 };
@@ -157,10 +156,7 @@ impl<T: Contribution> Handler<T> {
     fn handle_iom(&self, iom: InputOrMessage<T>, state: &mut State<T>) -> Result<(), Error> {
         trace!("hydrabadger::Handler: About to handle_iom: {:?}", iom);
         if let Some(step_res) = state.handle_iom(iom) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger handle_iom error: {:?}", err);
-                Error::HbStepError
-            })?;
+            let step = step_res.map_err(Error::HbStep)?;
             trace!("hydrabadger::Handler: Message step result added to queue....");
             self.step_queue.push(step);
         }
