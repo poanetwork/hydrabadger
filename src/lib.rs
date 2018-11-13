@@ -65,7 +65,7 @@ use tokio::{io, net::TcpStream, prelude::*, codec::{Framed, LengthDelimitedCodec
 use uuid::Uuid;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Input as DhbInput},
+    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Change as DhbChange},
     sync_key_gen::{Ack, Part},
     DaStep as MessagingStep,
     Contribution as HbbftContribution,
@@ -151,7 +151,7 @@ impl fmt::Debug for Uid {
 
 type Message = DhbMessage<Uid>;
 type Step<T> = MessagingStep<DynamicHoneyBadger<T, Uid>>;
-type Input<T> = DhbInput<T, Uid>;
+type Change = DhbChange<Uid>;
 
 /// A peer's incoming (listening) address.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -388,7 +388,8 @@ impl<T: Contribution> Sink for WireMessages<T> {
 pub enum InternalMessageKind<T: Contribution> {
     Wire(WireMessage<T>),
     HbMessage(Message),
-    HbInput(Input<T>),
+    HbContribution(T),
+    HbChange(Change),
     PeerDisconnect,
     NewIncomingConnection(InAddr, PublicKey, bool),
     NewOutgoingConnection,
@@ -432,8 +433,12 @@ impl<T: Contribution> InternalMessage<T> {
         InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbMessage(msg))
     }
 
-    pub fn hb_input(src_uid: Uid, src_addr: OutAddr, input: Input<T>) -> InternalMessage<T> {
-        InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbInput(input))
+    pub fn hb_contribution(src_uid: Uid, src_addr: OutAddr, contrib: T) -> InternalMessage<T> {
+        InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbContribution(contrib))
+    }
+
+    pub fn hb_vote(src_uid: Uid, src_addr: OutAddr, change: Change) -> InternalMessage<T> {
+        InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbChange(change))
     }
 
     pub fn peer_disconnect(src_uid: Uid, src_addr: OutAddr) -> InternalMessage<T> {

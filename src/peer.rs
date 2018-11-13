@@ -143,10 +143,10 @@ impl<T: Contribution> Future for PeerHandler<T> {
                             debug_assert_eq!(src_uid, *peer_uid);
                         }
 
-                        self.hdb.send_internal(InternalMessage::hb_input(
+                        self.hdb.send_internal(InternalMessage::hb_contribution(
                             src_uid,
                             self.out_addr,
-                            HbInput::User(txn),
+                            txn,
                         ))
                     }
                     kind => self.hdb.send_internal(InternalMessage::wire(

@@ -286,10 +286,10 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Handles a incoming batch of user transactions.
     pub fn propose_user_contribution(&self, txn: T) -> Result<(), Error> {
         if self.is_validator() {
-            self.send_internal(InternalMessage::hb_input(
+            self.send_internal(InternalMessage::hb_contribution(
                 self.inner.uid,
                 OutAddr(*self.inner.addr),
-                DhbInput::User(txn),
+                txn,
             ));
             Ok(())
         } else {
@@ -419,10 +419,10 @@ impl<T: Contribution> Hydrabadger<T> {
                             self.inner.config.txn_gen_bytes,
                         );
 
-                        hdb.send_internal(InternalMessage::hb_input(
+                        hdb.send_internal(InternalMessage::hb_contribution(
                             hdb.inner.uid,
                             OutAddr(*hdb.inner.addr),
-                            DhbInput::User(txns),
+                            txns,
                         ));
                     }
                     Ok(())

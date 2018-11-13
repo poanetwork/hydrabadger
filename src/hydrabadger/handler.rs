@@ -13,7 +13,7 @@ use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
     dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange,
-                           Input as DhbInput, NodeChange},
+                           NodeChange},
     // queueing_honey_badger::{Change as QhbChange, Input as QhbInput},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     Target, Epoched,
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tokio::{self, prelude::*};
 use {
-    Contribution, InAddr, Input, InternalMessage, InternalMessageKind, InternalRx, Message,
+    Change, Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx, Message,
     NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
 };
 use rand;
@@ -154,14 +154,27 @@ impl<T: Contribution> Handler<T> {
         Ok(())
     }
 
-    fn handle_input(&self, input: Input<T>, state: &mut State<T>) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to input....");
-        if let Some(step_res) = state.input(input) {
+    fn propose(&self, contrib: T, state: &mut State<T>) -> Result<(), Error> {
+        trace!("hydrabadger::Handler: About to propose contribution....");
+        if let Some(step_res) = state.propose(contrib) {
             let step = step_res.map_err(|err| {
-                error!("Honey Badger input error: {:?}", err);
+                error!("Honey Badger proposal error: {:?}", err);
                 Error::HbStepError
             })?;
-            trace!("hydrabadger::Handler: Input step result added to queue....");
+            trace!("hydrabadger::Handler: Propose step result added to queue....");
+            self.step_queue.push(step);
+        }
+        Ok(())
+    }
+
+    fn vote_for(&self, change: Change, state: &mut State<T>) -> Result<(), Error> {
+        trace!("hydrabadger::Handler: About to cast a vote....");
+        if let Some(step_res) = state.vote_for(change) {
+            let step = step_res.map_err(|err| {
+                error!("Honey Badger vote error: {:?}", err);
+                Error::HbStepError
+            })?;
+            trace!("hydrabadger::Handler: Vote step result added to queue....");
             self.step_queue.push(step);
         }
         Ok(())
@@ -417,8 +430,11 @@ impl<T: Contribution> Handler<T> {
         if let Some(iom_queue) = iom_queue_opt {
             while let Some(iom) = iom_queue.try_pop() {
                 match iom {
-                    InputOrMessage::Input(input) => {
-                        self.handle_input(input, state)?;
+                    InputOrMessage::Contribution(contrib) => {
+                        self.propose(contrib, state)?;
+                    }
+                    InputOrMessage::Change(change) => {
+                        self.vote_for(change, state)?;
                     }
                     InputOrMessage::Message(uid, msg) => {
                         self.handle_message(msg, &uid, state)?;
@@ -604,8 +620,12 @@ impl<T: Contribution> Handler<T> {
                 self.hdb.set_state_discriminant(state.discriminant());
             }
 
-            InternalMessageKind::HbInput(input) => {
-                self.handle_input(input, state)?;
+            InternalMessageKind::HbContribution(contrib) => {
+                self.propose(contrib, state)?;
+            }
+
+            InternalMessageKind::HbChange(change) => {
+                self.vote_for(change, state)?;
             }
 
             InternalMessageKind::HbMessage(msg) => {

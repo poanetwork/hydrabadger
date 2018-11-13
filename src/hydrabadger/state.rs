@@ -11,12 +11,12 @@ use hbbft::{
     crypto::{PublicKey, SecretKey},
     dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan, Error as DhbError},
     sync_key_gen::{Ack, Part, PartOutcome, SyncKeyGen},
-    DistAlgorithm, NetworkInfo,
+    NetworkInfo,
 };
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
 use rand;
-use {Contribution, Input, Message, NetworkNodeInfo, NetworkState, Step, Uid};
+use {Change, Contribution, Message, NetworkNodeInfo, NetworkState, Step, Uid};
 
 /// A `State` discriminant.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -463,21 +463,21 @@ impl<T: Contribution> State<T> {
         }
     }
 
-    /// Presents input to HoneyBadger or queues it for later.
+    /// Proposes a contribution for the current epoch in Honey Badger or queues it for later.
     ///
     /// Cannot be called while disconnected or connection-pending.
-    pub(super) fn input(&mut self, input: Input<T>) -> Option<Result<Step<T>, DhbError>> {
+    pub(super) fn propose(&mut self, contrib: T) -> Option<Result<Step<T>, DhbError>> {
         match self {
             State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
-                trace!("State::input: Inputting: {:?}", input);
-                let step_opt = Some(dhb.as_mut().unwrap().handle_input(input));
+                trace!("State::propose: Proposing: {:?}", contrib);
+                let step_opt = Some(dhb.as_mut().unwrap().propose(contrib));
 
                 match step_opt {
                     Some(ref step) => match step {
-                        Ok(s) => trace!("State::input: QHB output: {:?}", s.output),
-                        Err(err) => error!("State::input: QHB output error: {:?}", err),
+                        Ok(s) => trace!("State::propose: DHB output: {:?}", s.output),
+                        Err(err) => error!("State::propose: DHB output error: {:?}", err),
                     },
-                    None => trace!("State::input: QHB Output is `None`"),
+                    None => trace!("State::propose: DHB Output is `None`"),
                 }
 
                 return step_opt;
@@ -485,14 +485,51 @@ impl<T: Contribution> State<T> {
             State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
             | State::GeneratingKeys { ref iom_queue, .. }
             | State::DeterminingNetworkState { ref iom_queue, .. } => {
-                trace!("State::input: Queueing input: {:?}", input);
+                trace!("State::propose: Queueing proposal: {:?}", contrib);
                 iom_queue
                     .as_ref()
                     .unwrap()
-                    .push(InputOrMessage::Input(input));
+                    .push(InputOrMessage::Contribution(contrib));
             }
             s => panic!(
-                "State::handle_message: Must be connected in order to input to \
+                "State::propose: Must be connected in order to input to \
+                 honey badger. State: {}",
+                s.discriminant()
+            ),
+        }
+        None
+    }
+
+    /// Casts a vote in Honey Badger or queues it for later.
+    ///
+    /// Cannot be called while disconnected or connection-pending.
+    pub(super) fn vote_for(&mut self, change: Change) -> Option<Result<Step<T>, DhbError>> {
+        match self {
+            State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
+                trace!("State::vote_for: voting for: {:?}", change);
+                let step_opt = Some(dhb.as_mut().unwrap().vote_for(change));
+
+                match step_opt {
+                    Some(ref step) => match step {
+                        Ok(s) => trace!("State::vote_for: DHB output: {:?}", s.output),
+                        Err(err) => error!("State::vote_for: DHB output error: {:?}", err),
+                    },
+                    None => trace!("State::vote_for: DHB Output is `None`"),
+                }
+
+                return step_opt;
+            }
+            State::AwaitingMorePeersForKeyGeneration { ref iom_queue, .. }
+            | State::GeneratingKeys { ref iom_queue, .. }
+            | State::DeterminingNetworkState { ref iom_queue, .. } => {
+                trace!("State::vote_for: Queueing change: {:?}", change);
+                iom_queue
+                    .as_ref()
+                    .unwrap()
+                    .push(InputOrMessage::Change(change));
+            }
+            s => panic!(
+                "State::vote_for: Must be connected in order to input to \
                  honey badger. State: {}",
                 s.discriminant()
             ),
@@ -515,10 +552,10 @@ impl<T: Contribution> State<T> {
 
                 match step_opt {
                     Some(ref step) => match step {
-                        Ok(s) => trace!("State::handle_message: QHB output: {:?}", s.output),
-                        Err(err) => error!("State::handle_message: QHB output error: {:?}", err),
+                        Ok(s) => trace!("State::handle_message: DHB output: {:?}", s.output),
+                        Err(err) => error!("State::handle_message: DHB output error: {:?}", err),
                     },
-                    None => trace!("State::handle_message: QHB Output is `None`"),
+                    None => trace!("State::handle_message: DHB Output is `None`"),
                 }
 
                 return step_opt;

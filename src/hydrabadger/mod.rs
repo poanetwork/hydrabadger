@@ -11,7 +11,7 @@ use hbbft::{
     sync_key_gen::Error as SyncKeyGenError,
 };
 use std;
-use {Input, Message, Uid};
+use {Change, Message, Uid};
 
 pub use self::hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 pub use self::state::StateDsct;
@@ -22,7 +22,8 @@ pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
 pub enum InputOrMessage<T> {
-    Input(Input<T>),
+    Change(Change),
+    Contribution(T),
     Message(Uid, Message),
 }
 
