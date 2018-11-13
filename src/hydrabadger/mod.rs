@@ -7,7 +7,6 @@ use self::state::State;
 use bincode;
 use hbbft::{
     dynamic_honey_badger::Error as DhbError,
-    // queueing_honey_badger::Error as QhbError,
     sync_key_gen::Error as SyncKeyGenError,
 };
 use std;

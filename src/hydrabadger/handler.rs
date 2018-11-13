@@ -154,42 +154,11 @@ impl<T: Contribution> Handler<T> {
         Ok(())
     }
 
-    fn propose(&self, contrib: T, state: &mut State<T>) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to propose contribution....");
-        if let Some(step_res) = state.propose(contrib) {
+    fn handle_iom(&self, iom: InputOrMessage<T>, state: &mut State<T>) -> Result<(), Error> {
+        trace!("hydrabadger::Handler: About to handle_iom: {:?}", iom);
+        if let Some(step_res) = state.handle_iom(iom) {
             let step = step_res.map_err(|err| {
-                error!("Honey Badger proposal error: {:?}", err);
-                Error::HbStepError
-            })?;
-            trace!("hydrabadger::Handler: Propose step result added to queue....");
-            self.step_queue.push(step);
-        }
-        Ok(())
-    }
-
-    fn vote_for(&self, change: Change, state: &mut State<T>) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to cast a vote....");
-        if let Some(step_res) = state.vote_for(change) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger vote error: {:?}", err);
-                Error::HbStepError
-            })?;
-            trace!("hydrabadger::Handler: Vote step result added to queue....");
-            self.step_queue.push(step);
-        }
-        Ok(())
-    }
-
-    fn handle_message(
-        &self,
-        msg: Message,
-        src_uid: &Uid,
-        state: &mut State<T>,
-    ) -> Result<(), Error> {
-        trace!("hydrabadger::Handler: About to handle_message: {:?}", msg);
-        if let Some(step_res) = state.handle_message(src_uid, msg) {
-            let step = step_res.map_err(|err| {
-                error!("Honey Badger handle_message error: {:?}", err);
+                error!("Honey Badger handle_iom error: {:?}", err);
                 Error::HbStepError
             })?;
             trace!("hydrabadger::Handler: Message step result added to queue....");
@@ -429,17 +398,7 @@ impl<T: Contribution> Handler<T> {
         // Handle previously queued input and messages:
         if let Some(iom_queue) = iom_queue_opt {
             while let Some(iom) = iom_queue.try_pop() {
-                match iom {
-                    InputOrMessage::Contribution(contrib) => {
-                        self.propose(contrib, state)?;
-                    }
-                    InputOrMessage::Change(change) => {
-                        self.vote_for(change, state)?;
-                    }
-                    InputOrMessage::Message(uid, msg) => {
-                        self.handle_message(msg, &uid, state)?;
-                    }
-                }
+                self.handle_iom(iom, state)?;
             }
         }
         Ok(())
@@ -621,15 +580,15 @@ impl<T: Contribution> Handler<T> {
             }
 
             InternalMessageKind::HbContribution(contrib) => {
-                self.propose(contrib, state)?;
+                self.handle_iom(InputOrMessage::Contribution(contrib), state)?;
             }
 
             InternalMessageKind::HbChange(change) => {
-                self.vote_for(change, state)?;
+                self.handle_iom(InputOrMessage::Change(change), state)?;
             }
 
             InternalMessageKind::HbMessage(msg) => {
-                self.handle_message(msg, src_uid.as_ref().unwrap(), state)?;
+                self.handle_iom(InputOrMessage::Message(src_uid.unwrap(), msg), state)?;
             }
 
             InternalMessageKind::PeerDisconnect => {
