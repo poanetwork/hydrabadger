@@ -26,6 +26,8 @@ pub enum InputOrMessage<T> {
     Message(Uid, Message),
 }
 
+// TODO: Move this up to `lib.rs` or, preferably, create another error type
+// for general (lib) use.
 #[derive(Debug, Fail)]
 pub enum Error {
     #[fail(display = "Io error: {}", _0)]
@@ -50,8 +52,8 @@ pub enum Error {
     VoteForNotValidator,
     #[fail(display = "Unable to transmit epoch status to listener, listener receiver dropped")]
     InstantiateHbListenerDropped,
-    #[fail(display = "Received duplicate HelloRequestChangeAdd messages")]
-    DuplicateHello,
+    #[fail(display = "Message received from unknown peer")]
+    MessageReceivedUnknownPeer,
 }
 
 impl From<std::io::Error> for Error {

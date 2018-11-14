@@ -314,7 +314,7 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream) -> impl Future<Item = (), Error = ()> {
         info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
-        let wire_msgs = WireMessages::new(socket, self.inner.secret_key.clone());
+        let wire_msgs = WireMessages::new(socket, self.inner.secret_key.clone(), self.clone());
 
         wire_msgs
             .into_future()
@@ -382,7 +382,7 @@ impl<T: Contribution> Hydrabadger<T> {
             .and_then(move |socket| {
                 let local_pk = local_sk.public_key();
                 // Wrap the socket with the frame delimiter and codec:
-                let mut wire_msgs = WireMessages::new(socket, local_sk);
+                let mut wire_msgs = WireMessages::new(socket, local_sk, self.clone());
                 let wire_hello_result = wire_msgs.send_msg(WireMessage::hello_request_change_add(
                     uid, in_addr, local_pk,
                 ));
