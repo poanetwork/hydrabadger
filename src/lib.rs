@@ -64,7 +64,7 @@ use std::{
 use tokio::{io, net::TcpStream, prelude::*, codec::{Framed, LengthDelimitedCodec}};
 use uuid::Uuid;
 use hbbft::{
-    crypto::{PublicKey, PublicKeySet},
+    crypto::{PublicKey, PublicKeySet, SecretKey, Signature},
     dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Change as DhbChange},
     sync_key_gen::{Ack, Part},
     DaStep as MessagingStep,
@@ -306,17 +306,28 @@ impl<T: Contribution> From<WireMessageKind<T>> for WireMessage<T> {
     }
 }
 
+/// A serialized `WireMessage` signed by the sender.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignedWireMessage {
+    message: Vec<u8>,
+    sig: Signature,
+}
+
 /// A stream/sink of `WireMessage`s connected to a socket.
 #[derive(Debug)]
 pub struct WireMessages<T> {
     framed: Framed<TcpStream, LengthDelimitedCodec>,
+    our_key: SecretKey,
+    their_key: Option<PublicKey>,
     _t: PhantomData<T>,
 }
 
 impl<T: Contribution> WireMessages<T> {
-    pub fn new(socket: TcpStream) -> WireMessages<T> {
+    pub fn new(socket: TcpStream, our_key: SecretKey) -> WireMessages<T> {
         WireMessages {
             framed: Framed::new(socket, LengthDelimitedCodec::new()),
+            our_key,
+            their_key: None,
             _t: PhantomData,
         }
     }
@@ -339,10 +350,22 @@ impl<T: Contribution> Stream for WireMessages<T> {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match try_ready!(self.framed.poll()) {
             Some(frame) => {
-                Ok(Async::Ready(Some(
-                    // deserialize_from(frame.reader()).map_err(Error::Serde)?
-                    bincode::deserialize(&frame.freeze()).map_err(Error::Serde)?,
-                )))
+                let s_msg: SignedWireMessage =
+                    bincode::deserialize(&frame.freeze()).map_err(Error::Serde)?;
+                let msg: WireMessage<T> =
+                    bincode::deserialize(&s_msg.message).map_err(Error::Serde)?;
+                if let WireMessageKind::HelloRequestChangeAdd(_, _, pk) = msg.kind {
+                    if self.their_key.is_some() {
+                        return Err(Error::DuplicateHello);
+                    }
+                    self.their_key = Some(pk);
+                }
+                if !self.their_key.as_ref()
+                        .map_or(true, |pk| pk.verify(&s_msg.sig, &s_msg.message)) {
+                    return Err(Error::InvalidSignature);
+                }
+                // deserialize_from(frame.reader()).map_err(Error::Serde)?
+                Ok(Async::Ready(Some(msg)))
             }
             None => Ok(Async::Ready(None)),
         }
@@ -357,11 +380,14 @@ impl<T: Contribution> Sink for WireMessages<T> {
         // TODO: Reuse buffer:
         let mut serialized = BytesMut::new();
 
+        let message = bincode::serialize(&item).map_err(Error::Serde)?;
+        let sig = self.our_key.sign(&message);
+
         // Downgraded from bincode 1.0:
         //
         // Original: `bincode::serialize(&item)`
         //
-        match bincode::serialize(&item) {
+        match bincode::serialize(&SignedWireMessage { message, sig }) {
             Ok(s) => serialized.extend_from_slice(&s),
             Err(err) => return Err(Error::Io(io::Error::new(io::ErrorKind::Other, err))),
         }

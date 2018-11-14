@@ -314,7 +314,7 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream) -> impl Future<Item = (), Error = ()> {
         info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
-        let wire_msgs = WireMessages::new(socket);
+        let wire_msgs = WireMessages::new(socket, self.inner.secret_key.clone());
 
         wire_msgs
             .into_future()
@@ -368,7 +368,7 @@ impl<T: Contribution> Hydrabadger<T> {
     pub(super) fn connect_outgoing(
         self,
         remote_addr: SocketAddr,
-        local_pk: PublicKey,
+        local_sk: SecretKey,
         pub_info: Option<(Uid, InAddr, PublicKey)>,
         is_optimistic: bool,
     ) -> impl Future<Item = (), Error = ()> {
@@ -380,8 +380,9 @@ impl<T: Contribution> Hydrabadger<T> {
         TcpStream::connect(&remote_addr)
             .map_err(Error::from)
             .and_then(move |socket| {
+                let local_pk = local_sk.public_key();
                 // Wrap the socket with the frame delimiter and codec:
-                let mut wire_msgs = WireMessages::new(socket);
+                let mut wire_msgs = WireMessages::new(socket, local_sk);
                 let wire_hello_result = wire_msgs.send_msg(WireMessage::hello_request_change_add(
                     uid, in_addr, local_pk,
                 ));
@@ -511,12 +512,12 @@ impl<T: Contribution> Hydrabadger<T> {
             });
 
         let hdb = self.clone();
-        let local_pk = hdb.inner.secret_key.public_key();
+        let local_sk = hdb.inner.secret_key.clone();
         let connect = future::lazy(move || {
             for &remote_addr in remotes.iter().filter(|&&ra| ra != hdb.inner.addr.0) {
                 tokio::spawn(
                     hdb.clone()
-                        .connect_outgoing(remote_addr, local_pk, None, true),
+                        .connect_outgoing(remote_addr, local_sk.clone(), None, true),
                 );
             }
             Ok(())
