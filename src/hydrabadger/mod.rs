@@ -32,6 +32,8 @@ pub enum Error {
     Io(std::io::Error),
     #[fail(display = "Serde error: {}", _0)]
     Serde(bincode::Error),
+    #[fail(display = "Received a message with invalid signature")]
+    InvalidSignature,
     #[fail(display = "Error polling hydrabadger internal receiver")]
     HydrabadgerHandlerPoll,
     #[fail(display = "DynamicHoneyBadger error")]
@@ -48,6 +50,8 @@ pub enum Error {
     VoteForNotValidator,
     #[fail(display = "Unable to transmit epoch status to listener, listener receiver dropped")]
     InstantiateHbListenerDropped,
+    #[fail(display = "Received duplicate HelloRequestChangeAdd messages")]
+    DuplicateHello,
 }
 
 impl From<std::io::Error> for Error {

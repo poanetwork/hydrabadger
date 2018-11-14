@@ -453,10 +453,10 @@ impl<T: Contribution> Handler<T> {
                 && !peers.contains_in_addr(&peer_info.in_addr)
                 && peers.get(&OutAddr(peer_info.in_addr.0)).is_none()
             {
-                let local_pk = self.hdb.secret_key().public_key();
+                let local_sk = self.hdb.secret_key().clone();
                 tokio::spawn(self.hdb.clone().connect_outgoing(
                     peer_info.in_addr.0,
-                    local_pk,
+                    local_sk,
                     Some((peer_info.uid, peer_info.in_addr, peer_info.pk)),
                     false,
                 ));
