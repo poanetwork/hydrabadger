@@ -65,9 +65,6 @@ impl From<usize> for StateDsct {
 
 /// The current hydrabadger state.
 //
-// TODO: Make this into a struct and move the `state_dsct: AtomicUsize` field
-// into it.
-//
 pub enum State<T: Contribution> {
     Disconnected {},
     DeterminingNetworkState {

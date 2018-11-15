@@ -98,7 +98,9 @@ struct Inner<T: Contribution> {
 
     /// The current state containing HB when connected.
     state: RwLock<StateMachine<T>>,
-    state_dsct: Arc<AtomicUsize>,
+
+    /// A reference to the last known state discriminant. May be stale when read.
+    state_dsct_stale: Arc<AtomicUsize>,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx<T>,
@@ -149,7 +151,7 @@ impl<T: Contribution> Hydrabadger<T> {
         let current_epoch = cfg.start_epoch;
 
         let state = StateMachine::disconnected();
-        let state_dsct = state.dsct.clone();
+        let state_dsct_stale = state.dsct.clone();
 
         let inner = Arc::new(Inner {
             uid,
@@ -157,7 +159,7 @@ impl<T: Contribution> Hydrabadger<T> {
             secret_key,
             peers: RwLock::new(Peers::new()),
             state: RwLock::new(state),
-            state_dsct,
+            state_dsct_stale,
             peer_internal_tx,
             config: cfg,
             current_epoch: Mutex::new(current_epoch),
@@ -202,15 +204,14 @@ impl<T: Contribution> Hydrabadger<T> {
 
     /// Returns a recent state discriminant.
     ///
-    /// The returned value may not be up to date and is to be considered
+    /// The returned value may not be up to date and must be considered
     /// immediately stale.
-    pub fn state_info_stale(&self) -> (StateDsct, usize, usize) {
-        let sd = self.inner.state_dsct.load(Ordering::Relaxed).into();
-        (sd, 0, 0)
+    pub fn state_dsct_stale(&self) -> StateDsct {
+        self.inner.state_dsct_stale.load(Ordering::Relaxed).into()
     }
 
     pub fn is_validator(&self) -> bool {
-        StateDsct::from(self.inner.state_dsct.load(Ordering::Relaxed)) == StateDsct::Validator
+        self.state_dsct_stale() == StateDsct::Validator
     }
 
     /// Returns a reference to the peers list.
@@ -417,7 +418,7 @@ impl<T: Contribution> Hydrabadger<T> {
                 .for_each(move |_epoch_no| {
                     let hdb = self.clone();
 
-                    if let StateDsct::Validator = hdb.state_info_stale().0 {
+                    if let StateDsct::Validator = hdb.state_dsct_stale() {
                         info!(
                             "Generating and inputting {} random transactions...",
                             self.inner.config.txn_gen_count
@@ -457,7 +458,7 @@ impl<T: Contribution> Hydrabadger<T> {
             let peers = hdb.peers();
 
             // Log state:
-            let (dsct, p_ttl, p_est) = hdb.state_info_stale();
+            let dsct = hdb.state_dsct_stale();
             let peer_count = peers.count_total();
             info!("Hydrabadger State: {:?}({})", dsct, peer_count);
 
