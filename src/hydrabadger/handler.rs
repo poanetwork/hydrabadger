@@ -360,6 +360,8 @@ impl<T: Contribution> Handler<T> {
                             self.hdb.config(),
                             &self.step_queue,
                         )?);
+                        let (era, epoch) = state.dhb().unwrap().epoch();
+                        self.hdb.set_current_epoch(era + epoch);
                     }
                     None => {
                         iom_queue_opt = Some(state.set_validator(
