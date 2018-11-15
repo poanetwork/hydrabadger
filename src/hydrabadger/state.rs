@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use std::sync::{Arc, atomic::AtomicUsize};
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use super::{Config, Error, InputOrMessage};
 use crossbeam::queue::SegQueue;
 use hbbft::{
@@ -131,6 +131,14 @@ impl<T: Contribution> StateMachine<T> {
         }
     }
 
+    /// Sets the publicly visible state discriminant and returns the previous value.
+    fn set_state_discriminant(&self) -> StateDsct {
+        let sd = StateDsct::from(self.dsct.swap(self.state.discriminant().into(),
+            Ordering::Release));
+        info!("State has been set from '{}' to '{}'.", sd, self.state.discriminant());
+        sd
+    }
+
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_awaiting_more_peers(&mut self) {
         self.state = match self.state {
@@ -165,6 +173,7 @@ impl<T: Contribution> StateMachine<T> {
                 return;
             }
         };
+        self.set_state_discriminant();
     }
 
     /// Sets state to `DeterminingNetworkState` if
@@ -181,6 +190,7 @@ impl<T: Contribution> StateMachine<T> {
             }
             _ => panic!("Cannot reset network state when state is not `AwaitingMorePeersForKeyGeneration`."),
         };
+        self.set_state_discriminant();
     }
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
@@ -244,7 +254,7 @@ impl<T: Contribution> StateMachine<T> {
                  Must be State::AwaitingMorePeersForKeyGeneration"
             ),
         };
-
+        self.set_state_discriminant();
         Ok((part, ack))
     }
 
@@ -297,6 +307,7 @@ impl<T: Contribution> StateMachine<T> {
                 s.discriminant()
             ),
         };
+        self.set_state_discriminant();
         Ok(iom_queue_ret)
     }
 
@@ -366,6 +377,7 @@ impl<T: Contribution> StateMachine<T> {
                 s.discriminant()
             ),
         };
+        self.set_state_discriminant();
         Ok(iom_queue_ret)
     }
 
@@ -381,6 +393,7 @@ impl<T: Contribution> StateMachine<T> {
                 s.discriminant()
             ),
         };
+        self.set_state_discriminant();
         Ok(())
     }
 
@@ -398,6 +411,7 @@ impl<T: Contribution> StateMachine<T> {
             }
             _ => return,
         };
+        self.set_state_discriminant();
     }
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
@@ -433,7 +447,8 @@ impl<T: Contribution> StateMachine<T> {
                 debug!("Ignoring peer disconnection when `State::Validator`.");
                 return;
             }
-        }
+        };
+        self.set_state_discriminant();
     }
 
     /// Returns the network state, if possible.

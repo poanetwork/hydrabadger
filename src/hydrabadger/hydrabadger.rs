@@ -200,13 +200,6 @@ impl<T: Contribution> Hydrabadger<T> {
         self.inner.state.write()
     }
 
-    /// Sets the publicly visible state discriminant and returns the previous value.
-    pub(super) fn set_state_discriminant(&self, dsct: StateDsct) -> StateDsct {
-        let sd = StateDsct::from(self.inner.state_dsct.swap(dsct.into(), Ordering::Release));
-        info!("State has been set from '{}' to '{}'.", sd, dsct);
-        sd
-    }
-
     /// Returns a recent state discriminant.
     ///
     /// The returned value may not be up to date and is to be considered

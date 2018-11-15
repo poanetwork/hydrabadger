@@ -96,7 +96,6 @@ impl<T: Contribution> Handler<T> {
         match state.state {
             State::Disconnected { .. } | State::DeterminingNetworkState { .. } => {
                 state.update_peer_connection_added(&peers);
-                self.hdb.set_state_discriminant(state.discriminant());
             }
             State::AwaitingMorePeersForKeyGeneration { .. } => {
                 if peers.count_validators() >= self.hdb.config().keygen_peer_count {
@@ -112,7 +111,6 @@ impl<T: Contribution> Handler<T> {
                         peers,
                         self.hdb.config(),
                     )?;
-                    self.hdb.set_state_discriminant(state.discriminant());
 
                     info!("KEY GENERATION: Sending initial parts and our own ack.");
                     self.wire_to_validators(
@@ -393,8 +391,6 @@ impl<T: Contribution> Handler<T> {
             }
         }
 
-        self.hdb.set_state_discriminant(state.discriminant());
-
         // Handle previously queued input and messages:
         if let Some(iom_queue) = iom_queue_opt {
             while let Some(iom) = iom_queue.try_pop() {
@@ -429,12 +425,10 @@ impl<T: Contribution> Handler<T> {
             NetworkState::Unknown(p_infos) => {
                 peer_infos = p_infos;
                 state.update_peer_connection_added(peers);
-                self.hdb.set_state_discriminant(state.discriminant());
             }
             NetworkState::AwaitingMorePeersForKeyGeneration(p_infos) => {
                 peer_infos = p_infos;
                 state.set_awaiting_more_peers();
-                self.hdb.set_state_discriminant(state.discriminant());
             }
             NetworkState::GeneratingKeys(p_infos, public_keys) => {
                 peer_infos = p_infos;
@@ -450,7 +444,6 @@ impl<T: Contribution> Handler<T> {
                         // Key generation has completed and we were not a part
                         // of it. Need to restart as a freshly connecting node.
                         state.set_determining_network_state_active(net_info);
-                        self.hdb.set_state_discriminant(state.discriminant());
                         self.reset_peer_connections(state, peers)?;
                     }
                     State::Disconnected { .. }
@@ -493,7 +486,6 @@ impl<T: Contribution> Handler<T> {
         peers: &Peers<T>,
     ) -> Result<(), Error> {
         state.update_peer_connection_dropped(peers);
-        self.hdb.set_state_discriminant(state.discriminant());
 
         // TODO: Send a node removal (Change-Remove) vote?
 
@@ -546,7 +538,6 @@ impl<T: Contribution> Handler<T> {
                 match state.state {
                     State::Disconnected {} => {
                         state.set_awaiting_more_peers();
-                        self.hdb.set_state_discriminant(state.discriminant());
                         net_state = state.network_state(&peers);
                     }
                     State::DeterminingNetworkState {
@@ -590,7 +581,6 @@ impl<T: Contribution> Handler<T> {
 
                 let peers = self.hdb.peers();
                 state.update_peer_connection_added(&peers);
-                self.hdb.set_state_discriminant(state.discriminant());
             }
 
             InternalMessageKind::HbContribution(contrib) => {
@@ -775,7 +765,6 @@ impl<T: Contribution> Future for Handler<T> {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
                                 assert!(state.dhb().unwrap().netinfo().is_validator());
                                 state.promote_to_validator()?;
-                                self.hdb.set_state_discriminant(state.discriminant());
                             }
                         }
                         // FIXME
