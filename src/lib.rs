@@ -195,6 +195,8 @@ pub struct NetworkNodeInfo {
     pub(crate) pk: PublicKey,
 }
 
+type ActiveNetworkInfo = (Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>);
+
 /// The current state of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum NetworkState {
@@ -202,7 +204,7 @@ pub enum NetworkState {
     Unknown(Vec<NetworkNodeInfo>),
     AwaitingMorePeersForKeyGeneration(Vec<NetworkNodeInfo>),
     GeneratingKeys(Vec<NetworkNodeInfo>, BTreeMap<Uid, PublicKey>),
-    Active((Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>)),
+    Active(ActiveNetworkInfo),
 }
 
 /// Messages sent over the network between nodes.

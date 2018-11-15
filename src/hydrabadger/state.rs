@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+use std::sync::{Arc, atomic::AtomicUsize};
 use super::{Config, Error, InputOrMessage};
 use crossbeam::queue::SegQueue;
 use hbbft::{
@@ -16,7 +17,7 @@ use hbbft::{
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
 use rand;
-use {Contribution, NetworkNodeInfo, NetworkState, Step, Uid};
+use {Contribution, NetworkNodeInfo, NetworkState, Step, Uid, ActiveNetworkInfo};
 
 /// A `State` discriminant.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -113,15 +114,26 @@ impl<T: Contribution> State<T> {
             State::Validator { .. } => StateDsct::Validator,
         }
     }
+}
 
+
+pub struct StateMachine<T: Contribution> {
+    pub(crate) state: State<T>,
+    pub(crate) dsct: Arc<AtomicUsize>,
+}
+
+impl<T: Contribution> StateMachine<T> {
     /// Returns a new `State::Disconnected`.
-    pub(super) fn disconnected() -> State<T> {
-        State::Disconnected { /*secret_key: secret_key*/ }
+    pub(super) fn disconnected() -> StateMachine<T> {
+        StateMachine {
+            state: State::Disconnected {  },
+            dsct: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_awaiting_more_peers(&mut self) {
-        *self = match self {
+        self.state = match self.state {
             State::Disconnected {} => {
                 info!("Setting state: `AwaitingMorePeersForKeyGeneration`.");
                 State::AwaitingMorePeersForKeyGeneration {
@@ -144,7 +156,7 @@ impl<T: Contribution> State<T> {
                     iom_queue: iom_queue.take(),
                 }
             }
-            s => {
+            ref s => {
                 debug!(
                     "State::set_awaiting_more_peers: Attempted to set \
                      `State::AwaitingMorePeersForKeyGeneration` while {}.",
@@ -152,6 +164,22 @@ impl<T: Contribution> State<T> {
                 );
                 return;
             }
+        };
+    }
+
+    /// Sets state to `DeterminingNetworkState` if
+    /// `AwaitingMorePeersForKeyGeneration`, otherwise panics.
+    pub(super) fn set_determining_network_state_active(&mut self, net_info: ActiveNetworkInfo) {
+        self.state = match self.state {
+            State::AwaitingMorePeersForKeyGeneration { ref mut ack_queue, ref mut iom_queue } => {
+                info!("Setting state: `DeterminingNetworkState`.");
+                State::DeterminingNetworkState {
+                    ack_queue: ack_queue.take(),
+                    iom_queue: iom_queue.take(),
+                    network_state: Some(NetworkState::Active(net_info)),
+                }
+            }
+            _ => panic!("Cannot reset network state when state is not `AwaitingMorePeersForKeyGeneration`."),
         };
     }
 
@@ -164,7 +192,7 @@ impl<T: Contribution> State<T> {
         config: &Config,
     ) -> Result<(Part, Ack), Error> {
         let (part, ack);
-        *self = match self {
+        self.state = match self.state {
             State::AwaitingMorePeersForKeyGeneration {
                 ref mut iom_queue,
                 ref mut ack_queue,
@@ -233,7 +261,7 @@ impl<T: Contribution> State<T> {
         step_queue: &SegQueue<Step<T>>,
     ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
-        *self = match self {
+        self.state = match self.state {
             State::DeterminingNetworkState {
                 ref mut iom_queue, ..
             } => {
@@ -263,7 +291,7 @@ impl<T: Contribution> State<T> {
 
                 State::Observer { dhb: Some(dhb) }
             }
-            s => panic!(
+            ref s => panic!(
                 "State::set_observer: State must be `GeneratingKeys`. \
                  State: {}",
                 s.discriminant()
@@ -285,7 +313,7 @@ impl<T: Contribution> State<T> {
         _step_queue: &SegQueue<Step<T>>,
     ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
-        *self = match self {
+        self.state = match self.state {
             State::GeneratingKeys {
                 ref mut sync_key_gen,
                 mut public_key,
@@ -333,7 +361,7 @@ impl<T: Contribution> State<T> {
                 iom_queue_ret = iom_queue.take().unwrap();
                 State::Validator { dhb: Some(dhb) }
             }
-            s => panic!(
+            ref s => panic!(
                 "State::set_validator: State must be `GeneratingKeys`. State: {}",
                 s.discriminant()
             ),
@@ -343,12 +371,12 @@ impl<T: Contribution> State<T> {
 
     #[must_use]
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
-        *self = match self {
+        self.state = match self.state {
             State::Observer { ref mut dhb } => {
                 info!("=== PROMOTING NODE TO VALIDATOR ===");
                 State::Validator { dhb: dhb.take() }
             }
-            s => panic!(
+            ref s => panic!(
                 "State::promote_to_validator: State must be `Observer`. State: {}",
                 s.discriminant()
             ),
@@ -359,8 +387,7 @@ impl<T: Contribution> State<T> {
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does
     /// nothing.
     pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers<T>) {
-        let _dsct = self.discriminant();
-        *self = match self {
+        self.state = match self.state {
             State::Disconnected {} => {
                 info!("Setting state: `DeterminingNetworkState`.");
                 State::DeterminingNetworkState {
@@ -375,7 +402,7 @@ impl<T: Contribution> State<T> {
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
     pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers<T>) {
-        *self = match self {
+        self.state = match self.state {
             State::DeterminingNetworkState { .. } => {
                 if peers.count_total() == 0 {
                     State::Disconnected {}
@@ -418,7 +445,7 @@ impl<T: Contribution> State<T> {
                     .map(|(&uid, &in_addr, &pk)| NetworkNodeInfo { uid, in_addr, pk })
             })
             .collect::<Vec<_>>();
-        match self {
+        match self.state {
             State::AwaitingMorePeersForKeyGeneration { .. } => {
                 NetworkState::AwaitingMorePeersForKeyGeneration(peer_infos)
             }
@@ -447,7 +474,7 @@ impl<T: Contribution> State<T> {
 
     /// Returns a reference to the internal HB instance.
     pub fn dhb(&self) -> Option<&DynamicHoneyBadger<T, Uid>> {
-        match self {
+        match self.state {
             State::Observer { ref dhb, .. } => dhb.as_ref(),
             State::Validator { ref dhb, .. } => dhb.as_ref(),
             _ => None,
@@ -456,7 +483,7 @@ impl<T: Contribution> State<T> {
 
     /// Returns a reference to the internal HB instance.
     pub(super) fn dhb_mut(&mut self) -> Option<&mut DynamicHoneyBadger<T, Uid>> {
-        match self {
+        match self.state {
             State::Observer { ref mut dhb, .. } => dhb.as_mut(),
             State::Validator { ref mut dhb, .. } => dhb.as_mut(),
             _ => None,
@@ -470,7 +497,7 @@ impl<T: Contribution> State<T> {
         &mut self,
         iom: InputOrMessage<T>,
     ) -> Option<Result<Step<T>, DhbError>> {
-        match self {
+        match self.state {
             State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
                 trace!("State::handle_iom: Handling: {:?}", iom);
                 let step_opt = Some({
@@ -498,12 +525,17 @@ impl<T: Contribution> State<T> {
                 trace!("State::handle_iom: Queueing: {:?}", iom);
                 iom_queue.as_ref().unwrap().push(iom);
             }
-            s => panic!(
+            ref s => panic!(
                 "State::handle_iom: Must be connected in order to input to \
                  honey badger. State: {}",
                 s.discriminant()
             ),
         }
         None
+    }
+
+    /// Returns the state discriminant.
+    pub(super) fn discriminant(&self) -> StateDsct {
+        self.state.discriminant()
     }
 }

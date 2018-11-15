@@ -2,15 +2,15 @@ mod handler;
 mod hydrabadger;
 mod state;
 
-use self::handler::Handler;
-use self::state::State;
+use std;
 use bincode;
 use hbbft::{
     dynamic_honey_badger::Error as DhbError,
     sync_key_gen::Error as SyncKeyGenError,
 };
-use std;
 use {Change, Message, Uid};
+use self::handler::Handler;
+use self::state::{State, StateMachine};
 
 pub use self::hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 pub use self::state::StateDsct;

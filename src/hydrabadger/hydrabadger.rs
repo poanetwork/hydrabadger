@@ -4,7 +4,6 @@
 #![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
     unreachable_code)]
 
-use super::{Error, Handler, State, StateDsct};
 use futures::{
     future::{self, Either},
     sync::mpsc,
@@ -36,6 +35,7 @@ use {
     Change, Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage,
     WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx,
 };
+use super::{Error, Handler, StateMachine, State, StateDsct};
 
 // The number of random transactions to generate per interval.
 const DEFAULT_TXN_GEN_COUNT: usize = 5;
@@ -97,10 +97,8 @@ struct Inner<T: Contribution> {
     peers: RwLock<Peers<T>>,
 
     /// The current state containing HB when connected.
-    state: RwLock<State<T>>,
-
-    // TODO: Move this into a new state struct.
-    state_dsct: AtomicUsize,
+    state: RwLock<StateMachine<T>>,
+    state_dsct: Arc<AtomicUsize>,
 
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_tx: InternalTx<T>,
@@ -150,13 +148,16 @@ impl<T: Contribution> Hydrabadger<T> {
 
         let current_epoch = cfg.start_epoch;
 
+        let state = StateMachine::disconnected();
+        let state_dsct = state.dsct.clone();
+
         let inner = Arc::new(Inner {
             uid,
             addr: InAddr(addr),
             secret_key,
             peers: RwLock::new(Peers::new()),
-            state: RwLock::new(State::disconnected()),
-            state_dsct: AtomicUsize::new(0),
+            state: RwLock::new(state),
+            state_dsct,
             peer_internal_tx,
             config: cfg,
             current_epoch: Mutex::new(current_epoch),
@@ -190,12 +191,12 @@ impl<T: Contribution> Hydrabadger<T> {
     }
 
     /// Returns a reference to the inner state.
-    pub fn state(&self) -> RwLockReadGuard<State<T>> {
+    pub fn state(&self) -> RwLockReadGuard<StateMachine<T>> {
         self.inner.state.read()
     }
 
     /// Returns a mutable reference to the inner state.
-    pub(crate) fn state_mut(&self) -> RwLockWriteGuard<State<T>> {
+    pub(crate) fn state_mut(&self) -> RwLockWriteGuard<StateMachine<T>> {
         self.inner.state.write()
     }
 
