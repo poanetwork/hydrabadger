@@ -12,8 +12,7 @@ use super::{Error, Hydrabadger, InputOrMessage, StateMachine, State, StateDsct};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange,
-                           NodeChange},
+    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
     Target, Epoched,
 };
@@ -504,13 +503,11 @@ impl<T: Contribution> Handler<T> {
             State::GeneratingKeys { .. } => {
                 // Do something here (possibly panic).
             }
-            State::Observer { ref mut dhb } => {
-                // Do nothing instead?
-                let step = dhb.as_mut().unwrap().vote_to_remove(src_uid)?;
-                self.step_queue.push(step);
+            State::Observer { .. } => {
+                // Observers cannot vote.
             }
             State::Validator { ref mut dhb } => {
-                let step = dhb.as_mut().unwrap().vote_to_remove(src_uid)?;
+                let step = dhb.as_mut().unwrap().vote_to_remove(&src_uid)?;
                 self.step_queue.push(step);
             }
         }
@@ -760,15 +757,14 @@ impl<T: Contribution> Future for Handler<T> {
                     ChangeState::None => {}
                     ChangeState::InProgress(_change) => {}
                     ChangeState::Complete(change) => match change {
-                        DhbChange::NodeChange(NodeChange::Add(uid, pk)) => {
-                            if uid == self.hdb.uid() {
+                        DhbChange::NodeChange(pub_keys) => {
+                            if let Some(pk) = pub_keys.get(self.hdb.uid()) {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
                                 assert!(state.dhb().unwrap().netinfo().is_validator());
                                 state.promote_to_validator()?;
                             }
+                            // FIXME: Handle removed nodes.
                         }
-                        // FIXME
-                        DhbChange::NodeChange(NodeChange::Remove(_uid)) => {}
                         // FIXME
                         DhbChange::EncryptionSchedule(_schedule) => {}
                     },
