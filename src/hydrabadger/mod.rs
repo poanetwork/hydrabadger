@@ -52,8 +52,8 @@ pub enum Error {
     VoteForNotValidator,
     #[fail(display = "Unable to transmit epoch status to listener, listener receiver dropped")]
     InstantiateHbListenerDropped,
-    #[fail(display = "Message received from unknown peer")]
-    MessageReceivedUnknownPeer,
+    #[fail(display = "Message received from unknown peer while attempting to verify")]
+    VerificationMessageReceivedUnknownPeer,
 }
 
 impl From<std::io::Error> for Error {

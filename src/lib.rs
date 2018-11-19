@@ -209,8 +209,8 @@ pub enum NetworkState {
 
 /// Messages sent over the network between nodes.
 ///
-/// Only [`Message`](enum.WireMessageKind.html#variant.Message) variants are
-/// verified.
+/// [`Message`](enum.WireMessageKind.html#variant.Message) variants are among
+/// those verified.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessageKind<T> {
     HelloFromValidator(Uid, InAddr, PublicKey, NetworkState),
@@ -256,9 +256,7 @@ impl<T: Contribution> WireMessage<T> {
         in_addr: InAddr,
         pk: PublicKey,
     ) -> WireMessage<T> {
-        WireMessage {
-            kind: WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, pk),
-        }
+        WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, pk).into()
     }
 
     /// Returns a `WelcomeReceivedChangeAdd` variant.
@@ -267,29 +265,21 @@ impl<T: Contribution> WireMessage<T> {
         pk: PublicKey,
         net_state: NetworkState,
     ) -> WireMessage<T> {
-        WireMessage {
-            kind: WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state),
-        }
+        WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state).into()
     }
 
     /// Returns an `Input` variant.
     pub fn transaction(src_uid: Uid, txn: T) -> WireMessage<T> {
-        WireMessage {
-            kind: WireMessageKind::Transaction(src_uid, txn),
-        }
+        WireMessageKind::Transaction(src_uid, txn).into()
     }
 
     /// Returns a `Message` variant.
     pub fn message(src_uid: Uid, msg: Message) -> WireMessage<T> {
-        WireMessage {
-            kind: WireMessageKind::Message(src_uid, msg),
-        }
+        WireMessageKind::Message(src_uid, msg).into()
     }
 
     pub fn key_gen_part(part: Part) -> WireMessage<T> {
-        WireMessage {
-            kind: WireMessageKind::KeyGenPart(part),
-        }
+        WireMessageKind::KeyGenPart(part).into()
     }
 
     pub fn key_gen_part_ack(outcome: Ack) -> WireMessage<T> {
@@ -327,19 +317,24 @@ pub struct SignedWireMessage {
 /// A stream/sink of `WireMessage`s connected to a socket.
 pub struct WireMessages<T: Contribution> {
     framed: Framed<TcpStream, LengthDelimitedCodec>,
-    our_key: SecretKey,
-    hdb: Hydrabadger<T>,
+    local_sk: SecretKey,
+    peer_pk: Option<PublicKey>,
     _t: PhantomData<T>,
 }
 
 impl<T: Contribution> WireMessages<T> {
-    pub fn new(socket: TcpStream, our_key: SecretKey, hdb: Hydrabadger<T>) -> WireMessages<T> {
+    pub fn new(socket: TcpStream, local_sk: SecretKey) -> WireMessages<T> {
         WireMessages {
             framed: Framed::new(socket, LengthDelimitedCodec::new()),
-            our_key,
-            hdb,
+            local_sk,
+            peer_pk: None,
             _t: PhantomData,
         }
+    }
+
+    pub fn set_peer_public_key(&mut self, peer_pk: PublicKey) {
+        assert!(self.peer_pk.map(|pk| pk == peer_pk).unwrap_or(true));
+        self.peer_pk = Some(peer_pk);
     }
 
     pub fn socket(&self) -> &TcpStream {
@@ -365,16 +360,17 @@ impl<T: Contribution> Stream for WireMessages<T> {
                 let msg: WireMessage<T> =
                     bincode::deserialize(&s_msg.message).map_err(Error::Serde)?;
 
-                // Verify signature for `WireMessageKind::Message` variants.
-                if let WireMessageKind::Message(uid, _) = &msg.kind {
-                    match self.hdb.peers().get_by_uid(uid).and_then(|peer| peer.public_key()) {
-                        Some(pk) => {
-                            if !pk.verify(&s_msg.sig, &s_msg.message) {
-                                return Err(Error::InvalidSignature);
-                            }
-                        },
-                        None => return Err(Error::MessageReceivedUnknownPeer),
+                // Verify signature for certain variants.
+                match msg.kind {
+                    | WireMessageKind::Message(..)
+                    | WireMessageKind::KeyGenAck(..)
+                    | WireMessageKind::KeyGenPart(..) => {
+                        let peer_pk = self.peer_pk.ok_or(Error::VerificationMessageReceivedUnknownPeer)?;
+                        if !peer_pk.verify(&s_msg.sig, &s_msg.message) {
+                            return Err(Error::InvalidSignature);
+                        }
                     }
+                    _ => {}
                 }
 
                 Ok(Async::Ready(Some(msg)))
@@ -393,7 +389,7 @@ impl<T: Contribution> Sink for WireMessages<T> {
         let mut serialized = BytesMut::new();
 
         let message = bincode::serialize(&item).map_err(Error::Serde)?;
-        let sig = self.our_key.sign(&message);
+        let sig = self.local_sk.sign(&message);
 
         match bincode::serialize(&SignedWireMessage { message, sig }) {
             Ok(s) => serialized.extend_from_slice(&s),

@@ -57,7 +57,8 @@ clear_on_drop = "0.2"
 version = "*"
 # git = "https://github.com/c0gent/hbbft"
 git = "https://github.com/poanetwork/hbbft"
-branch = "master"
+# branch = "master"
+rev = "9049dd17"
 # path = "../hbbft"
 
 [profile.release]

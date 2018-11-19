@@ -63,6 +63,14 @@ impl From<usize> for StateDsct {
     }
 }
 
+
+// pub struct KeyGen {
+//     ack_queue: Option<SegQueue<(Uid, Ack)>>,
+//     iom_queue: Option<SegQueue<InputOrMessage<T>>>,
+
+// }
+
+
 /// The current hydrabadger state.
 //
 pub enum State<T: Contribution> {

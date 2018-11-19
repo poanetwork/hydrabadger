@@ -45,7 +45,7 @@ impl<T: Contribution> PeerHandler<T> {
     pub fn new(
         pub_info: Option<(Uid, InAddr, PublicKey)>,
         hdb: Hydrabadger<T>,
-        wire_msgs: WireMessages<T>,
+        mut wire_msgs: WireMessages<T>,
     ) -> PeerHandler<T> {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
@@ -53,7 +53,15 @@ impl<T: Contribution> PeerHandler<T> {
         // Create a channel for this peer
         let (tx, rx) = mpsc::unbounded();
 
-        let uid = pub_info.as_ref().map(|(uid, _, _)| *uid);
+        pub_info.as_ref().map(|(uid, _, _)| *uid);
+
+        let uid = match pub_info {
+            Some((uid, _, pk)) => {
+                wire_msgs.set_peer_public_key(pk);
+                Some(uid)
+            }
+            None => None,
+        };
 
         // Add an entry for this `Peer` in the shared state map.
         hdb.peers_mut().add(out_addr, tx, pub_info);
@@ -121,10 +129,20 @@ impl<T: Contribution> Future for PeerHandler<T> {
                     }
                     WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) => {
                         self.uid = Some(src_uid);
+                        self.wire_msgs.set_peer_public_key(pk);
                         self.hdb.send_internal(InternalMessage::wire(
                             Some(src_uid),
                             self.out_addr,
                             WireMessage::welcome_received_change_add(src_uid, pk, net_state),
+                        ));
+                    }
+                    WireMessageKind::HelloFromValidator(src_uid, in_addr, pk, net_state) => {
+                        self.uid = Some(src_uid);
+                        self.wire_msgs.set_peer_public_key(pk);
+                        self.hdb.send_internal(InternalMessage::wire(
+                            Some(src_uid),
+                            self.out_addr,
+                            WireMessage::hello_from_validator(src_uid, in_addr, pk, net_state),
                         ));
                     }
                     WireMessageKind::Message(src_uid, msg) => {
