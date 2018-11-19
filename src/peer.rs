@@ -409,14 +409,16 @@ impl<T: Contribution> Peer<T> {
 pub struct Peers<T: Contribution> {
     peers: HashMap<OutAddr, Peer<T>>,
     out_addrs: HashMap<Uid, OutAddr>,
+    local_addr: InAddr,
 }
 
 impl<T: Contribution> Peers<T> {
     /// Returns a new empty list of peers.
-    pub(crate) fn new() -> Peers<T> {
+    pub(crate) fn new(local_addr: InAddr) -> Peers<T> {
         Peers {
             peers: HashMap::with_capacity(64),
             out_addrs: HashMap::with_capacity(64),
+            local_addr,
         }
     }
 
@@ -522,6 +524,47 @@ impl<T: Contribution> Peers<T> {
             None => peer.establish_validator(Some(pub_info)),
         }
         false
+    }
+
+    pub(crate) fn wire_to_all(&self, msg: WireMessage<T>) {
+        for (_p_addr, peer) in self.peers
+            .iter()
+            .filter(|(&p_addr, _)| p_addr != OutAddr(self.local_addr.0))
+        {
+            peer.tx().unbounded_send(msg.clone()).unwrap();
+        }
+    }
+
+    pub(crate) fn wire_to_validators(&self, msg: WireMessage<T>) {
+        // for peer in peers.validators()
+        //         .filter(|p| p.out_addr() != &OutAddr(self.hdb.addr().0)) {
+        //     peer.tx().unbounded_send(msg.clone()).unwrap();
+        // }
+
+        // FIXME: TEMPORARILY WIRE TO ALL FOR NOW.
+        self.wire_to_all(msg)
+    }
+
+    /// Sends a `WireMessage` to the target specified by `tar_uid`.
+    ///
+    /// If the target is not an established node, the message will be returned
+    /// along with an incremented retry count.
+    pub(crate) fn wire_to(&self, tar_uid: Uid, msg: WireMessage<T>, retry_count: usize)
+        -> Option<(Uid, WireMessage<T>, usize)>
+    {
+        match self.get_by_uid(&tar_uid) {
+            Some(p) => {
+                p.tx().unbounded_send(msg).unwrap();
+                None
+            },
+            None => {
+                info!(
+                    "Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
+                    tar_uid, retry_count
+                );
+                Some((tar_uid, msg, retry_count + 1))
+            }
+        }
     }
 
     /// Removes a peer the list if it exists.

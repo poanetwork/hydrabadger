@@ -157,7 +157,7 @@ impl<T: Contribution> Hydrabadger<T> {
             uid,
             addr: InAddr(addr),
             secret_key,
-            peers: RwLock::new(Peers::new()),
+            peers: RwLock::new(Peers::new(InAddr(addr))),
             state: RwLock::new(state),
             state_dsct_stale,
             peer_internal_tx,
