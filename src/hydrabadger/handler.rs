@@ -352,6 +352,7 @@ impl<T: Contribution> Handler<T> {
                 info!("== INSTANTIATING HONEY BADGER ==");
                 match jp_opt {
                     Some(jp) => {
+                        let epoch = jp.next_epoch();
                         iom_queue_opt = Some(state.set_observer(
                             *self.hdb.uid(),
                             self.hdb.secret_key().clone(),
@@ -359,8 +360,7 @@ impl<T: Contribution> Handler<T> {
                             self.hdb.config(),
                             &self.step_queue,
                         )?);
-                        let (era, epoch) = state.dhb().unwrap().epoch();
-                        self.hdb.set_current_epoch(era + epoch);
+                        self.hdb.set_current_epoch(epoch);
                     }
                     None => {
                         iom_queue_opt = Some(state.set_validator(
@@ -761,7 +761,9 @@ impl<T: Contribution> Future for Handler<T> {
                             if let Some(pk) = pub_keys.get(self.hdb.uid()) {
                                 assert_eq!(*pk, self.hdb.secret_key().public_key());
                                 assert!(state.dhb().unwrap().netinfo().is_validator());
-                                state.promote_to_validator()?;
+                                if state.discriminant() == StateDsct::Observer {
+                                    state.promote_to_validator()?;
+                                }
                             }
                             // FIXME: Handle removed nodes.
                         }
