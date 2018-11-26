@@ -33,6 +33,7 @@ pub(super) enum State {
     },
 }
 
+/// Forwards an `Ack` to a `SyncKeyGen` instance.
 fn handle_ack(
     uid: &Uid,
     ack: Ack,
@@ -47,6 +48,8 @@ fn handle_ack(
     }
 }
 
+/// Forwards all queued `Ack`s to a `SyncKeyGen` instance if `part_count` is
+/// sufficient.
 fn handle_queued_acks<T: Contribution>(
     ack_queue: &SegQueue<(Uid, Ack)>,
     part_count: usize,
@@ -150,7 +153,8 @@ impl KeyGenMachine {
         Ok((part, ack))
     }
 
-	pub(super) fn handle_new_established_peer<T: Contribution>(
+    /// Notify this key generation instance that peers have been added.
+	pub(super) fn add_peers<T: Contribution>(
         &mut self,
         peers: &Peers<T>,
         hdb: &Hydrabadger<T>,
@@ -187,7 +191,8 @@ impl KeyGenMachine {
             }
             State::Generating { .. } => {
                 // This *could* be called multiple times when initially
-                // establishing outgoing connections. Do nothing for now.
+                // establishing outgoing connections. Do nothing for now but
+                // redesign this at some point.
                 warn!("Ignoring new established peer signal while key gen `State::Generating`.");
             }
             State::Complete { .. } => {
@@ -197,6 +202,7 @@ impl KeyGenMachine {
 		Ok(())
 	}
 
+	/// Handles a received `Part`.
 	pub(super) fn handle_key_gen_part<T: Contribution>(&mut self, src_uid: &Uid, part: Part, hdb: &Hydrabadger<T>) {
         match self.state {
             State::Generating {
@@ -252,6 +258,7 @@ impl KeyGenMachine {
         }
     }
 
+    /// Handles a received `Ack`.
     pub(super) fn handle_key_gen_ack<T: Contribution>(
         &mut self,
         src_uid: &Uid,
@@ -302,10 +309,12 @@ impl KeyGenMachine {
         }
     }
 
+    /// Returns the state of this key generation instance.
     pub(super) fn state(&self) -> &State {
     	&self.state
     }
 
+    /// Returns true if this key generation instance is awaiting more peers.
     pub(super) fn is_awaiting_peers(&self) -> bool {
     	match self.state {
     		State::AwaitingPeers { .. } => true,
@@ -313,6 +322,8 @@ impl KeyGenMachine {
     	}
     }
 
+    /// Returns the `SyncKeyGen` instance and `PublicKey` if this key
+    /// generation instance is complete.
     pub(super) fn complete(&mut self) -> Option<(SyncKeyGen<Uid>, PublicKey)> {
     	match self.state {
     		State::Complete { ref mut sync_key_gen, ref mut public_key } => {

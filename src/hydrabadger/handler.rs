@@ -60,7 +60,7 @@ impl<T: Contribution> Handler<T> {
                 // TODO: Should network state simply be stored within key_gen?
                 let net_state = state.network_state(&peers);
                 state.key_gen_mut().unwrap()
-                    .handle_new_established_peer(peers, &self.hdb, net_state)?;
+                    .add_peers(peers, &self.hdb, net_state)?;
             }
             StateDsct::Observer | StateDsct::Validator => {
                 // If the new peer sends a request-change-add (to be a
