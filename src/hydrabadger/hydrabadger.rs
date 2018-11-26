@@ -1,24 +1,19 @@
 //! A hydrabadger consensus node.
 //!
 
-#![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
-    unreachable_code)]
-
 use futures::{
     future::{self, Either},
     sync::mpsc,
 };
 use hbbft::{
     crypto::{PublicKey, SecretKey},
-    dynamic_honey_badger::Input as DhbInput,
 };
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer::{PeerHandler, Peers};
 use rand::{self, Rand};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
-    net::{SocketAddr, ToSocketAddrs},
+    net::SocketAddr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Weak,
@@ -35,7 +30,7 @@ use {
     Change, Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage,
     WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx,
 };
-use super::{Error, Handler, StateMachine, State, StateDsct};
+use super::{Error, Handler, StateMachine, StateDsct};
 
 // The number of random transactions to generate per interval.
 const DEFAULT_TXN_GEN_COUNT: usize = 5;
@@ -128,10 +123,6 @@ pub struct Hydrabadger<T: Contribution> {
 impl<T: Contribution> Hydrabadger<T> {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config) -> Self {
-        use chrono::Local;
-        use env_logger;
-        use std::env;
-
         let uid = Uid::new();
         let secret_key = SecretKey::rand(&mut rand::thread_rng());
 

@@ -4,27 +4,21 @@
 //!     * Do not make state changes directly in this module (use closures, etc.).
 //!
 
-#![allow(unused_imports, dead_code, unused_variables, unused_mut, unused_assignments,
-    unreachable_code)]
-
 use super::WIRE_MESSAGE_RETRY_MAX;
 use super::{Error, Hydrabadger, InputOrMessage, StateMachine, State, StateDsct};
 use crossbeam::queue::SegQueue;
 use hbbft::{
-    crypto::{PublicKey, PublicKeySet},
-    dynamic_honey_badger::{ChangeState, JoinPlan, Message as DhbMessage, Change as DhbChange},
-    sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
-    Target, Epoched,
+    crypto::PublicKey,
+    dynamic_honey_badger::{ChangeState, JoinPlan, Change as DhbChange},
+    sync_key_gen::{Ack, Part},
+    Target,
 };
 use peer::Peers;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use tokio::{self, prelude::*};
 use {
-    Change, Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx, Message,
-    NetworkNodeInfo, NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
+    Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
+    NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
 };
-use rand;
 
 /// Hydrabadger event (internal message) handler.
 pub struct Handler<T: Contribution> {
@@ -53,55 +47,22 @@ impl<T: Contribution> Handler<T> {
     fn handle_new_established_peer(
         &self,
         src_uid: Uid,
-        _src_addr: OutAddr,
         src_pk: PublicKey,
         request_change_add: bool,
         state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        match state.state {
-            State::Disconnected { .. } | State::DeterminingNetworkState { .. } => {
+        match state.discriminant() {
+            StateDsct::Disconnected | StateDsct::DeterminingNetworkState => {
                 state.update_peer_connection_added(&peers);
             }
-            State::AwaitingMorePeersForKeyGeneration { .. } => {
-                if peers.count_validators() >= self.hdb.config().keygen_peer_count {
-                    info!("== BEGINNING KEY GENERATION ==");
-
-                    let local_uid = *self.hdb.uid();
-                    let local_in_addr = *self.hdb.addr();
-                    let local_sk = self.hdb.secret_key().public_key();
-
-                    let (part, ack) = state.set_generating_keys(
-                        &local_uid,
-                        self.hdb.secret_key().clone(),
-                        peers,
-                        self.hdb.config(),
-                    )?;
-
-                    info!("KEY GENERATION: Sending initial parts and our own ack.");
-                    peers.wire_to_validators(
-                        WireMessage::hello_from_validator(
-                            local_uid,
-                            local_in_addr,
-                            local_sk,
-                            state.network_state(&peers),
-                        ),
-                    );
-                    peers.wire_to_validators(WireMessage::key_gen_part(part));
-
-                    // FIXME: QUEUE ACKS UNTIL PARTS ARE ALL RECEIVED:
-                    peers.wire_to_validators(WireMessage::key_gen_part_ack(ack));
-                }
+            StateDsct::KeyGen => {
+                // TODO: Should network state simply be stored within key_gen?
+                let net_state = state.network_state(&peers);
+                state.key_gen_mut().unwrap()
+                    .handle_new_established_peer(peers, &self.hdb, net_state)?;
             }
-            State::GeneratingKeys { .. } => {
-                // This *could* be called multiple times when initially
-                // establishing outgoing connections. Do nothing for now.
-                warn!(
-                    "hydrabadger::Handler::handle_new_established_peer: Ignoring new established \
-                     peer signal while `StateDsct::GeneratingKeys`."
-                );
-            }
-            State::Observer { .. } | State::Validator { .. } => {
+            StateDsct::Observer | StateDsct::Validator => {
                 // If the new peer sends a request-change-add (to be a
                 // validator), input the change into HB and broadcast, etc.
                 if request_change_add {
@@ -126,88 +87,10 @@ impl<T: Contribution> Handler<T> {
         Ok(())
     }
 
-    fn handle_ack(
-        &self,
-        uid: &Uid,
-        ack: Ack,
-        sync_key_gen: &mut SyncKeyGen<Uid>,
-        ack_count: &mut usize,
-    ) {
-        info!("KEY GENERATION: Handling ack from '{}'...", uid);
-        let ack_outcome = sync_key_gen.handle_ack(uid, ack.clone()).expect("Failed to handle Ack.");
-        match ack_outcome {
-            AckOutcome::Invalid(fault) => error!("Error handling ack: '{:?}':\n{:?}", ack, fault),
-            AckOutcome::Valid => *ack_count += 1,
-        }
-    }
-
-    fn handle_queued_acks(
-        &self,
-        ack_queue: &SegQueue<(Uid, Ack)>,
-        sync_key_gen: &mut SyncKeyGen<Uid>,
-        part_count: usize,
-        ack_count: &mut usize,
-    ) {
-        if part_count == self.hdb.config().keygen_peer_count + 1 {
-            info!("KEY GENERATION: Handling queued acks...");
-
-            debug!("   Peers complete: {}", sync_key_gen.count_complete());
-            debug!("   Part count: {}", part_count);
-            debug!("   Ack count: {}", ack_count);
-
-            while let Some((uid, ack)) = ack_queue.try_pop() {
-                self.handle_ack(&uid, ack, sync_key_gen, ack_count);
-            }
-        }
-    }
-
     fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut StateMachine<T>) {
         match state.state {
-            State::GeneratingKeys {
-                ref mut sync_key_gen,
-                ref ack_queue,
-                ref mut part_count,
-                ref mut ack_count,
-                ..
-            } => {
-                // TODO: Move this match block into a function somewhere for re-use:
-                info!("KEY GENERATION: Handling part from '{}'...", src_uid);
-                let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
-                let mut skg = sync_key_gen.as_mut().unwrap();
-                let ack = match skg.handle_part(&mut rng, src_uid, part) {
-                    Ok(PartOutcome::Valid(Some(ack))) => ack,
-                    Ok(PartOutcome::Invalid(faults)) => panic!(
-                        "Invalid part \
-                         (FIXME: handle): {:?}",
-                        faults
-                    ),
-                    Ok(PartOutcome::Valid(None)) => {
-                        error!("`DynamicHoneyBadger::handle_part` returned `None`.");
-                        return;
-                    }
-                    Err(err) => {
-                        error!("Error handling Part: {:?}", err);
-                        return;
-                    }
-                };
-
-                *part_count += 1;
-
-                info!("KEY GENERATION: Queueing `Ack`.");
-                ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
-
-                self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
-
-                let peers = self.hdb.peers();
-                info!(
-                    "KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...",
-                    src_uid
-                );
-                peers.wire_to_validators(WireMessage::key_gen_part_ack(ack));
-
-                debug!("   Peers complete: {}", skg.count_complete());
-                debug!("   Part count: {}", part_count);
-                debug!("   Ack count: {}", ack_count);
+            State::KeyGen { ref mut key_gen, .. } => {
+                key_gen.handle_key_gen_part(src_uid, part, &self.hdb);
             }
             State::DeterminingNetworkState { ref network_state, .. } => {
                 match network_state.is_some() {
@@ -230,32 +113,12 @@ impl<T: Contribution> Handler<T> {
         state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        let mut keygen_is_complete = false;
+        let mut complete = false;
+
         match state.state {
-            State::GeneratingKeys {
-                ref mut sync_key_gen,
-                ref ack_queue,
-                ref part_count,
-                ref mut ack_count,
-                ..
-            } => {
-                let mut skg = sync_key_gen.as_mut().unwrap();
-
-                info!("KEY GENERATION: Queueing `Ack`.");
-                ack_queue.as_ref().unwrap().push((*src_uid, ack.clone()));
-
-                self.handle_queued_acks(ack_queue.as_ref().unwrap(), skg, *part_count, ack_count);
-
-                let node_n = self.hdb.config().keygen_peer_count + 1;
-
-                if skg.count_complete() == node_n && *ack_count >= node_n * node_n {
-                    info!("KEY GENERATION: All acks received and handled.");
-                    debug!("   Peers complete: {}", skg.count_complete());
-                    debug!("   Part count: {}", part_count);
-                    debug!("   Ack count: {}", ack_count);
-
-                    assert!(skg.is_ready());
-                    keygen_is_complete = true;
+            State::KeyGen { ref mut key_gen, .. } => {
+                if key_gen.handle_key_gen_ack(src_uid, ack, &self.hdb)? {
+                    complete = true;
                 }
             }
             State::Validator { .. } | State::Observer { .. } => {
@@ -266,7 +129,7 @@ impl<T: Contribution> Handler<T> {
             }
             _ => panic!("::handle_key_gen_ack: State must be `GeneratingKeys`."),
         }
-        if keygen_is_complete {
+        if complete {
             self.instantiate_hb(None, state, peers)?;
         }
         Ok(())
@@ -290,7 +153,7 @@ impl<T: Contribution> Handler<T> {
                 info!("Received join plan.");
                 self.instantiate_hb(Some(jp), state, peers)?;
             }
-            StateDsct::AwaitingMorePeersForKeyGeneration | StateDsct::GeneratingKeys => {
+            StateDsct::KeyGen => {
                 panic!(
                     "hydrabadger::Handler::handle_join_plan: Received join plan while \
                      `{}`",
@@ -314,7 +177,7 @@ impl<T: Contribution> Handler<T> {
 
         match state.discriminant() {
             StateDsct::Disconnected => unimplemented!(),
-            StateDsct::DeterminingNetworkState | StateDsct::GeneratingKeys => {
+            StateDsct::DeterminingNetworkState | StateDsct::KeyGen => {
                 info!("== INSTANTIATING HONEY BADGER ==");
                 match jp_opt {
                     Some(jp) => {
@@ -343,7 +206,6 @@ impl<T: Contribution> Handler<T> {
                         .map_err(|_| Error::InstantiateHbListenerDropped)?;
                 }
             }
-            StateDsct::AwaitingMorePeersForKeyGeneration => unimplemented!(),
             StateDsct::Observer => {
                 // TODO: Add checks to ensure that `net_info` is consistent
                 // with HB's netinfo.
@@ -371,7 +233,7 @@ impl<T: Contribution> Handler<T> {
     /// without including this node.
     fn reset_peer_connections(
         &self,
-        state: &mut StateMachine<T>,
+        _state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
         peers.wire_to_validators(WireMessage::hello_request_change_add(*self.hdb.uid(),
@@ -395,30 +257,40 @@ impl<T: Contribution> Handler<T> {
                 peer_infos = p_infos;
                 state.set_awaiting_more_peers();
             }
-            NetworkState::GeneratingKeys(p_infos, public_keys) => {
+            NetworkState::GeneratingKeys(p_infos, _public_keys) => {
                 peer_infos = p_infos;
             }
             NetworkState::Active(net_info) => {
                 peer_infos = net_info.0.clone();
+                let mut reset_fresh = false;
 
                 match state.state {
                     State::DeterminingNetworkState { ref mut network_state, .. } => {
-                        *network_state = Some(NetworkState::Active(net_info));
+                        *network_state = Some(NetworkState::Active(net_info.clone()));
                     }
-                    State::AwaitingMorePeersForKeyGeneration { .. } => {
-                        // Key generation has completed and we were not a part
-                        // of it. Need to restart as a freshly connecting node.
-                        state.set_determining_network_state_active(net_info);
-                        self.reset_peer_connections(state, peers)?;
+                    State::KeyGen { ref key_gen, .. } => {
+                        if key_gen.is_awaiting_peers() {
+                            reset_fresh = true;
+                        } else {
+                            panic!(
+                                "Handler::net_state: Received `NetworkState::Active` while `{}`.",
+                                state.discriminant()
+                            );
+                        }
                     }
-                    State::Disconnected { .. }
-                    | State::GeneratingKeys { .. } => {
+                    State::Disconnected { .. } => {
                         panic!(
                             "Handler::net_state: Received `NetworkState::Active` while `{}`.",
                             state.discriminant()
                         );
                     }
                     _ => {}
+                }
+                if reset_fresh {
+                    // Key generation has completed and we were not a part
+                    // of it. Need to restart as a freshly connecting node.
+                    state.set_determining_network_state_active(net_info);
+                    self.reset_peer_connections(state, peers)?;
                 }
             }
             NetworkState::None => panic!("`NetworkState::None` received."),
@@ -461,12 +333,7 @@ impl<T: Contribution> Handler<T> {
             State::DeterminingNetworkState { .. } => {
                 // unimplemented!();
             }
-            State::AwaitingMorePeersForKeyGeneration { .. } => {
-                // info!("Removing peer ({}: '{}') from await list.",
-                //     src_out_addr, src_uid.unwrap());
-                // state.peer_connection_dropped(&*self.hdb.peers());
-            }
-            State::GeneratingKeys { .. } => {
+            State::KeyGen { .. } => {
                 // Do something here (possibly panic).
             }
             State::Observer { .. } => {
@@ -527,7 +394,7 @@ impl<T: Contribution> Handler<T> {
                 // Modify state accordingly:
                 self.handle_new_established_peer(
                     src_uid.unwrap(),
-                    src_out_addr,
+                    // src_out_addr,
                     src_pk,
                     request_change_add,
                     state,
@@ -609,7 +476,7 @@ impl<T: Contribution> Handler<T> {
                     // Modify state accordingly:
                     self.handle_new_established_peer(
                         src_uid_new,
-                        src_out_addr,
+                        // src_out_addr,
                         src_pk,
                         false,
                         state,
@@ -747,14 +614,14 @@ impl<T: Contribution> Future for Handler<T> {
 
                 // Send the batch along its merry way:
                 if !self.batch_tx.is_closed() {
-                    if let Err(err) = self.batch_tx.unbounded_send(batch) {
+                    if let Err(_err) = self.batch_tx.unbounded_send(batch) {
                         error!("Unable to send batch output. Shutting down...");
                         return Ok(Async::Ready(()));
                     } else {
                         // Notify epoch listeners that a batch has been output.
                         let mut dropped_listeners = Vec::new();
                         for (i, listener) in self.hdb.epoch_listeners().iter().enumerate() {
-                            if let Err(err) = listener.unbounded_send(batch_epoch + 1) {
+                            if let Err(_err) = listener.unbounded_send(batch_epoch + 1) {
                                 dropped_listeners.push(i);
                                 error!("Epoch listener {} has dropped.", i);
                             }

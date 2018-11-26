@@ -1,6 +1,7 @@
 mod handler;
 mod hydrabadger;
 mod state;
+mod key_gen;
 
 use std;
 use bincode;
