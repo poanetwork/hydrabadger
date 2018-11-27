@@ -186,7 +186,7 @@ impl KeyGenMachine {
                         ),
                     );
                     peers.wire_to_validators(WireMessage::key_gen_part(part));
-                    peers.wire_to_validators(WireMessage::key_gen_part_ack(ack));
+                    peers.wire_to_validators(WireMessage::key_gen_ack(ack));
                 }
             }
             State::Generating { .. } => {
@@ -242,7 +242,7 @@ impl KeyGenMachine {
                     "KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...",
                     src_uid
                 );
-                peers.wire_to_validators(WireMessage::key_gen_part_ack(ack));
+                peers.wire_to_validators(WireMessage::key_gen_ack(ack));
 
                 debug!("   Peers complete: {}", skg.count_complete());
                 debug!("   Part count: {}", part_count);

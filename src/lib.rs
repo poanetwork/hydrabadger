@@ -207,6 +207,13 @@ pub enum NetworkState {
     Active(ActiveNetworkInfo),
 }
 
+/// Messages used during synchronous key generation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum KeyGenMessage {
+    Part(Part),
+    Ack(Ack),
+}
+
 /// Messages sent over the network between nodes.
 ///
 /// [`Message`](enum.WireMessageKind.html#variant.Message) variants are among
@@ -229,8 +236,8 @@ pub enum WireMessageKind<T> {
     Message(Uid, Message),
     // TODO(c0gent): Remove.
     Transaction(Uid, T),
-    KeyGenPart(Part),
-    KeyGenAck(Ack),
+    /// Messages used during synchronous key generation.
+    KeyGen(KeyGenMessage),
     JoinPlan(JoinPlan<Uid>),
 }
 
@@ -278,12 +285,18 @@ impl<T: Contribution> WireMessage<T> {
         WireMessageKind::Message(src_uid, msg).into()
     }
 
-    pub fn key_gen_part(part: Part) -> WireMessage<T> {
-        WireMessageKind::KeyGenPart(part).into()
+    pub fn key_gen(msg: KeyGenMessage) -> WireMessage<T> {
+        WireMessageKind::KeyGen(msg).into()
     }
 
-    pub fn key_gen_part_ack(outcome: Ack) -> WireMessage<T> {
-        WireMessageKind::KeyGenAck(outcome).into()
+    pub fn key_gen_part(part: Part) -> WireMessage<T> {
+        // WireMessageKind::KeyGenPart(part).into()
+        WireMessage::key_gen(KeyGenMessage::Part(part))
+    }
+
+    pub fn key_gen_ack(ack: Ack) -> WireMessage<T> {
+        // WireMessageKind::KeyGenAck(outcome).into()
+        WireMessage::key_gen(KeyGenMessage::Ack(ack))
     }
 
     pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage<T> {
@@ -363,8 +376,7 @@ impl<T: Contribution> Stream for WireMessages<T> {
                 // Verify signature for certain variants.
                 match msg.kind {
                     | WireMessageKind::Message(..)
-                    | WireMessageKind::KeyGenAck(..)
-                    | WireMessageKind::KeyGenPart(..) => {
+                    | WireMessageKind::KeyGen(..) => {
                         let peer_pk = self.peer_pk.ok_or(Error::VerificationMessageReceivedUnknownPeer)?;
                         if !peer_pk.verify(&s_msg.sig, &s_msg.message) {
                             return Err(Error::InvalidSignature);

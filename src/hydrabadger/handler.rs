@@ -18,6 +18,7 @@ use tokio::{self, prelude::*};
 use {
     Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
     NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
+    KeyGenMessage,
 };
 
 /// Hydrabadger event (internal message) handler.
@@ -87,7 +88,10 @@ impl<T: Contribution> Handler<T> {
         Ok(())
     }
 
-    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut StateMachine<T>) {
+    /// Handles a received `Part`.
+    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut StateMachine<T>)
+        -> Result<(), Error>
+    {
         match state.state {
             State::KeyGen { ref mut key_gen, .. } => {
                 key_gen.handle_key_gen_part(src_uid, part, &self.hdb);
@@ -104,8 +108,10 @@ impl<T: Contribution> Handler<T> {
                 s.discriminant()
             ),
         }
+        Ok(())
     }
 
+    /// Handles a received `Ack`.
     fn handle_key_gen_ack(
         &self,
         src_uid: &Uid,
@@ -134,6 +140,30 @@ impl<T: Contribution> Handler<T> {
         }
         Ok(())
     }
+
+    fn handle_key_gen_message(
+        &self,
+        msg: KeyGenMessage,
+        src_uid: &Uid,
+        state: &mut StateMachine<T>,
+        peers: &Peers<T>,
+    ) -> Result<(), Error> {
+        match msg {
+            // Key gen proposal:
+            KeyGenMessage::Part(part) => {
+                self.handle_key_gen_part(src_uid, part, state)
+            }
+
+            // Key gen proposal acknowledgement:
+            //
+            // FIXME: Queue until all parts have been sent.
+            KeyGenMessage::Ack(ack) => {
+                self.handle_key_gen_ack(src_uid, ack, state, peers)
+            }
+        }
+    }
+
+
 
     // This may be called spuriously and only need be handled by
     // 'unestablished' nodes.
@@ -484,17 +514,21 @@ impl<T: Contribution> Handler<T> {
                     )?;
                 }
 
-                // Key gen proposal:
-                WireMessageKind::KeyGenPart(part) => {
-                    self.handle_key_gen_part(&src_uid.unwrap(), part, state);
-                }
+                // // Key gen proposal:
+                // WireMessageKind::KeyGenPart(part) => {
+                //     self.handle_key_gen_part(&src_uid.unwrap(), part, state);
+                // }
 
-                // Key gen proposal acknowledgement:
-                //
-                // FIXME: Queue until all parts have been sent.
-                WireMessageKind::KeyGenAck(ack) => {
-                    let peers = self.hdb.peers();
-                    self.handle_key_gen_ack(&src_uid.unwrap(), ack, state, &peers)?;
+                // // Key gen proposal acknowledgement:
+                // //
+                // // FIXME: Queue until all parts have been sent.
+                // WireMessageKind::KeyGenAck(ack) => {
+                //     let peers = self.hdb.peers();
+                //     self.handle_key_gen_ack(&src_uid.unwrap(), ack, state, &peers)?;
+                // }
+
+                WireMessageKind::KeyGen(msg) => {
+                    self.handle_key_gen_message(msg, &src_uid.unwrap(), state, &self.hdb.peers())?;
                 }
 
                 // Output by validators when a batch with a `ChangeState`
