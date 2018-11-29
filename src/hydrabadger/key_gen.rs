@@ -13,7 +13,6 @@ use rand;
 use super::Error;
 use {Contribution, NetworkState, Uid, WireMessage};
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum InstanceId {
     BuiltIn,
@@ -25,47 +24,47 @@ pub enum InstanceId {
 pub enum MessageKind {
     Part(Part),
     Ack(Ack),
-    InstanceId,
+    // InstanceId(InstanceId),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
-    instance_id: InstanceId,
+    // instance_id: InstanceId,
     kind: MessageKind,
 }
 
 impl Message {
-    pub fn part(instance_id: InstanceId, part: Part) -> Message {
+    pub fn part(/*instance_id: InstanceId, */part: Part) -> Message {
         Message {
-            instance_id,
+            // instance_id,
             kind: MessageKind::Part(part),
         }
     }
 
-    pub fn ack(instance_id: InstanceId, ack: Ack) -> Message {
+    pub fn ack(/*instance_id: InstanceId, */ack: Ack) -> Message {
         Message {
-            instance_id,
+            // instance_id,
             kind: MessageKind::Ack(ack),
         }
     }
 
-    pub fn instance_id(instance_id: InstanceId) -> Message {
-    	Message {
-            instance_id,
-            kind: MessageKind::InstanceId,
-        }
-    }
+    // pub fn instance_id(instance_id: InstanceId) -> Message {
+    // 	Message {
+    //         // instance_id,
+    //         kind: MessageKind::InstanceId(instance_id),
+    //     }
+    // }
 
     pub fn kind(&self) -> &MessageKind {
     	&self.kind
     }
 
-    // pub fn into_kind(self) -> MessageKind {
-    // 	self.kind
+    // pub fn into_parts(self) -> (InstanceId, MessageKind) {
+    // 	(self.instance_id, self.kind)
     // }
 
-    pub fn into_parts(self) -> (InstanceId, MessageKind) {
-    	(self.instance_id, self.kind)
+    pub fn into_kind(self) -> MessageKind {
+    	self.kind
     }
 }
 
@@ -113,9 +112,9 @@ fn handle_queued_acks<T: Contribution>(
     part_count: usize,
     ack_count: &mut usize,
     sync_key_gen: &mut SyncKeyGen<Uid>,
-    hdb: &Hydrabadger<T>,
+    peers: &Peers<T>,
 ) {
-    if part_count == hdb.config().keygen_peer_count + 1 {
+    if part_count == peers.count_validators() + 1 {
         trace!("KEY GENERATION: Handling queued acks...");
 
         debug!("   Peers complete: {}", sync_key_gen.count_complete());
@@ -134,6 +133,7 @@ pub struct Machine {
     state: State,
     ack_queue: SegQueue<(Uid, Ack)>,
     event_tx: Option<mpsc::UnboundedSender<Message>>,
+    instance_id: InstanceId,
 }
 
 impl Machine {
@@ -141,7 +141,8 @@ impl Machine {
 	/// state.
 	pub fn awaiting_peers(
 		ack_queue: SegQueue<(Uid, Ack)>,
-		event_tx: Option<mpsc::UnboundedSender<Message>>
+		event_tx: Option<mpsc::UnboundedSender<Message>>,
+		instance_id: InstanceId,
 	) -> Machine {
 		Machine {
 			state: State::AwaitingPeers {
@@ -150,6 +151,7 @@ impl Machine {
 			},
 			ack_queue,
 			event_tx,
+			instance_id,
 		}
 	}
 
@@ -160,7 +162,7 @@ impl Machine {
         local_sk: SecretKey,
         peers: &Peers<T>,
         event_tx: mpsc::UnboundedSender<Message>,
-        // peer_count: usize,
+        instance_id: InstanceId,
     ) -> Result<Machine, Error> {
 		let mut m = Machine {
 			state: State::AwaitingPeers {
@@ -169,12 +171,13 @@ impl Machine {
 			},
 			ack_queue: SegQueue::new(),
 			event_tx: Some(event_tx),
+			instance_id: instance_id.clone(),
 		};
 
 		let (part, ack) = m.set_generating_keys(local_uid, local_sk, peers)?;
 
-		peers.wire_to_validators(WireMessage::key_gen_part(InstanceId::BuiltIn, part));
-        peers.wire_to_validators(WireMessage::key_gen_ack(InstanceId::BuiltIn, ack));
+		peers.wire_to_validators(WireMessage::key_gen_part(instance_id.clone(), part));
+        peers.wire_to_validators(WireMessage::key_gen_ack(instance_id, ack));
 
 		Ok(m)
 	}
@@ -273,8 +276,8 @@ impl Machine {
                             net_state,
                         ),
                     );
-                    peers.wire_to_validators(WireMessage::key_gen_part(InstanceId::BuiltIn, part));
-                    peers.wire_to_validators(WireMessage::key_gen_ack(InstanceId::BuiltIn, ack));
+                    peers.wire_to_validators(WireMessage::key_gen_part(self.instance_id.clone(), part));
+                    peers.wire_to_validators(WireMessage::key_gen_ack(self.instance_id.clone(), ack));
                 }
             }
             State::Generating { .. } => {
@@ -291,7 +294,12 @@ impl Machine {
 	}
 
 	/// Handles a received `Part`.
-	pub(super) fn handle_key_gen_part<T: Contribution>(&mut self, src_uid: &Uid, part: Part, hdb: &Hydrabadger<T>) {
+	pub(super) fn handle_key_gen_part<T: Contribution>(
+		&mut self,
+		src_uid: &Uid,
+		part: Part,
+		peers: &Peers<T>
+	) {
         match self.state {
             State::Generating {
                 ref mut sync_key_gen,
@@ -325,18 +333,18 @@ impl Machine {
                 trace!("KEY GENERATION: Queueing `Ack`.");
                 self.ack_queue.push((*src_uid, ack.clone()));
 
-                let peers = hdb.peers();
+                // let peers = hdb.peers();
                 trace!(
                     "KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...",
                     src_uid
                 );
-                peers.wire_to_validators(WireMessage::key_gen_ack(InstanceId::BuiltIn, ack));
+                peers.wire_to_validators(WireMessage::key_gen_ack(self.instance_id.clone(), ack));
 
                 debug!("   Peers complete: {}", skg.count_complete());
                 debug!("   Part count: {}", part_count);
                 debug!("   Ack count: {}", ack_count);
 
-                handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, hdb)
+                handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, peers)
             }
             ref s => panic!(
                 "::handle_key_gen_part: State must be `GeneratingKeys`. \
@@ -351,7 +359,8 @@ impl Machine {
         &mut self,
         src_uid: &Uid,
         ack: Ack,
-        hdb: &Hydrabadger<T>,
+        // hdb: &Hydrabadger<T>,
+        peers: &Peers<T>,
     ) -> Result<bool, Error> {
         let mut complete: Option<(SyncKeyGen<Uid>, PublicKey)> = None;
 
@@ -363,16 +372,16 @@ impl Machine {
                 ref mut ack_count,
                 ..
             } => {
-        		let node_n = {
+        		{
 	                let mut skg = sync_key_gen.as_mut().unwrap();
 
 	                trace!("KEY GENERATION: Queueing `Ack`.");
 	                self.ack_queue.push((*src_uid, ack.clone()));
 
-	                handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, hdb);
-
-	                hdb.config().keygen_peer_count + 1
+	                handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, peers);
 	            };
+
+	            let node_n = peers.count_validators() + 1;
 
                 if sync_key_gen.as_ref().unwrap().count_complete() == node_n && *ack_count >= node_n * node_n {
                 	let skg = sync_key_gen.take().unwrap();

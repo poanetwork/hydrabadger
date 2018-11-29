@@ -123,7 +123,8 @@ impl<T: Contribution> StateMachine<T> {
             State::Disconnected {} => {
                 info!("Setting state: `KeyGen`.");
                 State::KeyGen {
-                    key_gen: key_gen::Machine::awaiting_peers(SegQueue::new(), None),
+                    key_gen: key_gen::Machine::awaiting_peers(SegQueue::new(), None,
+                        key_gen::InstanceId::BuiltIn),
                     iom_queue: Some(SegQueue::new())
                 }
             }
@@ -138,7 +139,8 @@ impl<T: Contribution> StateMachine<T> {
                 );
                 info!("Setting state: `KeyGen`.");
                 State::KeyGen {
-                    key_gen: key_gen::Machine::awaiting_peers(ack_queue.take().unwrap(), None),
+                    key_gen: key_gen::Machine::awaiting_peers(ack_queue.take().unwrap(), None,
+                        key_gen::InstanceId::BuiltIn),
                     iom_queue: iom_queue.take() ,
                 }
             }
@@ -294,7 +296,6 @@ impl<T: Contribution> StateMachine<T> {
         Ok(iom_queue_ret)
     }
 
-    #[must_use]
     pub(super) fn promote_to_validator(&mut self) -> Result<(), Error> {
         self.state = match self.state {
             State::Observer { ref mut dhb } => {

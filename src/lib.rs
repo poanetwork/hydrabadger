@@ -231,7 +231,7 @@ pub enum WireMessageKind<T> {
     // TODO(c0gent): Remove.
     Transaction(Uid, T),
     /// Messages used during synchronous key generation.
-    KeyGen(key_gen::Message),
+    KeyGen(key_gen::InstanceId, key_gen::Message),
     JoinPlan(JoinPlan<Uid>),
 }
 
@@ -279,18 +279,18 @@ impl<T: Contribution> WireMessage<T> {
         WireMessageKind::Message(src_uid, msg).into()
     }
 
-    pub fn key_gen(msg: key_gen::Message) -> WireMessage<T> {
-        WireMessageKind::KeyGen(msg).into()
+    pub fn key_gen(instance_id: key_gen::InstanceId, msg: key_gen::Message) -> WireMessage<T> {
+        WireMessageKind::KeyGen(instance_id, msg).into()
     }
 
     pub fn key_gen_part(instance_id: key_gen::InstanceId, part: Part) -> WireMessage<T> {
         // WireMessageKind::KeyGenPart(part).into()
-        WireMessage::key_gen(key_gen::Message::part(instance_id, part))
+        WireMessage::key_gen(instance_id, key_gen::Message::part(part))
     }
 
     pub fn key_gen_ack(instance_id: key_gen::InstanceId, ack: Ack) -> WireMessage<T> {
         // WireMessageKind::KeyGenAck(outcome).into()
-        WireMessage::key_gen(key_gen::Message::ack(instance_id, ack))
+        WireMessage::key_gen(instance_id, key_gen::Message::ack(ack))
     }
 
     pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage<T> {
