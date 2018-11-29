@@ -6,7 +6,6 @@
 #![allow(dead_code)]
 
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-use super::{Config, Error, InputOrMessage};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
@@ -16,7 +15,7 @@ use hbbft::{
 };
 use peer::Peers;
 use std::{collections::BTreeMap, fmt};
-use super::key_gen::KeyGenMachine;
+use super::{Config, Error, InputOrMessage, key_gen};
 use {Contribution, NetworkNodeInfo, NetworkState, Step, Uid, ActiveNetworkInfo};
 
 /// A `State` discriminant.
@@ -71,7 +70,7 @@ pub enum State<T: Contribution> {
         network_state: Option<NetworkState>,
     },
     KeyGen {
-        key_gen: KeyGenMachine,
+        key_gen: key_gen::Machine,
         iom_queue: Option<SegQueue<InputOrMessage<T>>>,
     },
     Observer {
@@ -124,7 +123,7 @@ impl<T: Contribution> StateMachine<T> {
             State::Disconnected {} => {
                 info!("Setting state: `KeyGen`.");
                 State::KeyGen {
-                    key_gen: KeyGenMachine::awaiting_peers(SegQueue::new()),
+                    key_gen: key_gen::Machine::awaiting_peers(SegQueue::new(), None),
                     iom_queue: Some(SegQueue::new())
                 }
             }
@@ -139,7 +138,7 @@ impl<T: Contribution> StateMachine<T> {
                 );
                 info!("Setting state: `KeyGen`.");
                 State::KeyGen {
-                    key_gen: KeyGenMachine::awaiting_peers(ack_queue.take().unwrap()),
+                    key_gen: key_gen::Machine::awaiting_peers(ack_queue.take().unwrap(), None),
                     iom_queue: iom_queue.take() ,
                 }
             }
@@ -428,7 +427,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the key generation instance.
-    pub(super) fn key_gen(&self) -> Option<&KeyGenMachine> {
+    pub(super) fn key_gen(&self) -> Option<&key_gen::Machine> {
         match self.state {
             State::KeyGen { ref key_gen, .. } => Some(key_gen),
             _ => None,
@@ -436,7 +435,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the key generation instance.
-    pub(super) fn key_gen_mut(&mut self) -> Option<&mut KeyGenMachine> {
+    pub(super) fn key_gen_mut(&mut self) -> Option<&mut key_gen::Machine> {
         match self.state {
             State::KeyGen { ref mut key_gen, .. } => Some(key_gen),
             _ => None,

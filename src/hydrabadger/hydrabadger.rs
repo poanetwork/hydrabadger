@@ -1,16 +1,6 @@
 //! A hydrabadger consensus node.
 //!
 
-use futures::{
-    future::{self, Either},
-    sync::mpsc,
-};
-use hbbft::{
-    crypto::{PublicKey, SecretKey},
-};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use peer::{PeerHandler, Peers};
-use rand::{self, Rand};
 use std::{
     collections::HashSet,
     net::SocketAddr,
@@ -20,15 +10,25 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use rand::{self, Rand};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use futures::{
+    future::{self, Either},
+    sync::mpsc,
+};
 use tokio::{
     self,
     net::{TcpListener, TcpStream},
     prelude::*,
     timer::{Interval, Delay},
 };
+use hbbft::{
+    crypto::{PublicKey, SecretKey},
+};
+use peer::{PeerHandler, Peers};
 use {
     Change, Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage,
-    WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx,
+    WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx, key_gen,
 };
 use super::{Error, Handler, StateMachine, StateDsct};
 
@@ -297,6 +297,15 @@ impl<T: Contribution> Hydrabadger<T> {
         }
     }
 
+    /// Begins a synchronous distributed key generation instance and returns a
+    /// stream which may be polled for events and messages.
+    pub fn new_key_gen_instance(&self) -> mpsc::UnboundedReceiver<key_gen::Message> {
+        let (tx, rx) = mpsc::unbounded();
+        self.send_internal(InternalMessage::new_key_gen_instance(
+            self.inner.uid, OutAddr(*self.inner.addr), tx));
+        rx
+    }
+
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream) -> impl Future<Item = (), Error = ()> {
         info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
@@ -559,7 +568,7 @@ pub struct HydrabadgerWeak<T: Contribution> {
 
 impl<T: Contribution> HydrabadgerWeak<T> {
     pub fn upgrade(self) -> Option<Hydrabadger<T>> {
-        self.inner.upgrade() .and_then(|inner| {
+        self.inner.upgrade().and_then(|inner| {
             self.handler.upgrade().and_then(|handler| {
                 self.batch_rx.upgrade().and_then(|batch_rx|{
                     Some(Hydrabadger { inner, handler, batch_rx })

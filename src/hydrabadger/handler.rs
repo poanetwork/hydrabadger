@@ -4,9 +4,13 @@
 //!     * Do not make state changes directly in this module (use closures, etc.).
 //!
 
-use super::WIRE_MESSAGE_RETRY_MAX;
-use super::{Error, Hydrabadger, InputOrMessage, StateMachine, State, StateDsct};
+
+use std::{
+    collections::HashMap,
+    cell::RefCell,
+};
 use crossbeam::queue::SegQueue;
+use tokio::{self, prelude::*};
 use hbbft::{
     crypto::PublicKey,
     dynamic_honey_badger::{ChangeState, JoinPlan, Change as DhbChange},
@@ -14,24 +18,27 @@ use hbbft::{
     Target,
 };
 use peer::Peers;
-use tokio::{self, prelude::*};
 use {
     Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
     NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
-    KeyGenMessage,
+    key_gen,
 };
+use super::WIRE_MESSAGE_RETRY_MAX;
+use super::{Error, Hydrabadger, InputOrMessage, StateMachine, State, StateDsct};
 
 /// Hydrabadger event (internal message) handler.
 pub struct Handler<T: Contribution> {
     hdb: Hydrabadger<T>,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     peer_internal_rx: InternalRx<T>,
-    // Outgoing wire message queue:
+    /// Outgoing wire message queue.
     wire_queue: SegQueue<(Uid, WireMessage<T>, usize)>,
-    // Output from HoneyBadger:
+    /// Output from HoneyBadger.
     step_queue: SegQueue<Step<T>>,
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     batch_tx: BatchTx<T>,
+    /// Distributed synchronous key generation instances.
+    key_gens: RefCell<HashMap<Uid, key_gen::Machine>>,
 }
 
 impl<T: Contribution> Handler<T> {
@@ -42,6 +49,7 @@ impl<T: Contribution> Handler<T> {
             wire_queue: SegQueue::new(),
             step_queue: SegQueue::new(),
             batch_tx,
+            key_gens: RefCell::new(HashMap::new()),
         }
     }
 
@@ -143,27 +151,58 @@ impl<T: Contribution> Handler<T> {
 
     fn handle_key_gen_message(
         &self,
-        msg: KeyGenMessage,
+        msg: key_gen::Message,
         src_uid: &Uid,
         state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        match msg {
-            // Key gen proposal:
-            KeyGenMessage::Part(part) => {
-                self.handle_key_gen_part(src_uid, part, state)
-            }
+        use key_gen::{InstanceId, MessageKind};
 
-            // Key gen proposal acknowledgement:
-            //
-            // FIXME: Queue until all parts have been sent.
-            KeyGenMessage::Ack(ack) => {
-                self.handle_key_gen_ack(src_uid, ack, state, peers)
+        let (instance_id, kind) = msg.into_parts();
+
+        match instance_id {
+            InstanceId::User(_id) => {
+                // let key_gens = self.key_gens.borrow_mut();
+                // let key_gen = match key_gens.get(&id) {
+                //     Some(kg) => {
+                //         // Key gen proposal:
+                //         MessageKind::Part(part) => {
+                //             self.handle_key_gen_part(src_uid, part, state)?;
+                //         }
+                //         // Key gen proposal acknowledgement:
+                //         //
+                //         // FIXME: Queue until all parts have been sent.
+                //         MessageKind::Ack(ack) => {
+                //             self.handle_key_gen_ack(src_uid, ack, state, &self.hdb.peers())?;
+                //         }
+
+                //         MessageKind::InstanceId => panic!("InstanceId should not be sent \
+                //             for BuiltIn key gen instances"),
+                //     }
+                //     None => error!("KeyGen message received with invalid instance"),
+                // }
+            }
+            InstanceId::BuiltIn => {
+                match kind {
+                    // Key gen proposal:
+                    MessageKind::Part(part) => {
+                        self.handle_key_gen_part(src_uid, part, state)?;
+                    }
+                    // Key gen proposal acknowledgement:
+                    //
+                    // FIXME: Queue until all parts have been sent.
+                    MessageKind::Ack(ack) => {
+                        self.handle_key_gen_ack(src_uid, ack, state, peers)?;
+                    }
+
+                    MessageKind::InstanceId => panic!("InstanceId should not be sent \
+                        for BuiltIn key gen instances"),
+                }
             }
         }
+
+        Ok(())
     }
-
-
 
     // This may be called spuriously and only need be handled by
     // 'unestablished' nodes.
@@ -382,6 +421,9 @@ impl<T: Contribution> Handler<T> {
         i_msg: InternalMessage<T>,
         state: &mut StateMachine<T>,
     ) -> Result<(), Error> {
+        // let mut state_guard = self.hdb.state_mut();
+        // let mut state = &mut state_guard;
+
         let (src_uid, src_out_addr, w_msg) = i_msg.into_parts();
 
         match w_msg {
@@ -465,6 +507,16 @@ impl<T: Contribution> Handler<T> {
                 self.handle_peer_disconnect(dropped_src_uid, state, &peers)?;
             }
 
+            InternalMessageKind::NewKeyGenInstance(tx) => {
+                // TODO: Spawn these instances in a separate thread/task.
+
+                let peers = self.hdb.peers();
+                let new_id = Uid::new();
+                tx.unbounded_send(key_gen::Message::instance_id(key_gen::InstanceId::User(new_id.clone()))).unwrap();
+                let key_gen = key_gen::Machine::generate(self.hdb.uid(), self.hdb.secret_key().clone(), &peers, tx)?;
+                self.key_gens.borrow_mut().insert(new_id, key_gen);
+            }
+
             InternalMessageKind::Wire(w_msg) => match w_msg.into_kind() {
                 // This is sent on the wire to ensure that we have all of the
                 // relevant details for a peer (generally preceeding other
@@ -514,19 +566,6 @@ impl<T: Contribution> Handler<T> {
                     )?;
                 }
 
-                // // Key gen proposal:
-                // WireMessageKind::KeyGenPart(part) => {
-                //     self.handle_key_gen_part(&src_uid.unwrap(), part, state);
-                // }
-
-                // // Key gen proposal acknowledgement:
-                // //
-                // // FIXME: Queue until all parts have been sent.
-                // WireMessageKind::KeyGenAck(ack) => {
-                //     let peers = self.hdb.peers();
-                //     self.handle_key_gen_ack(&src_uid.unwrap(), ack, state, &peers)?;
-                // }
-
                 WireMessageKind::KeyGen(msg) => {
                     self.handle_key_gen_message(msg, &src_uid.unwrap(), state, &self.hdb.peers())?;
                 }
@@ -558,9 +597,7 @@ impl<T: Contribution> Future for Handler<T> {
         // Ensure the loop can't hog the thread for too long:
         const MESSAGES_PER_TICK: usize = 50;
 
-        trace!("hydrabadger::Handler::poll: Locking 'state' for writing...");
         let mut state = self.hdb.state_mut();
-        trace!("hydrabadger::Handler::poll: 'state' locked for writing.");
 
         // Handle incoming internal messages:
         for i in 0..MESSAGES_PER_TICK {
@@ -599,6 +636,8 @@ impl<T: Contribution> Future for Handler<T> {
         }
 
         trace!("hydrabadger::Handler: Processing step queue....");
+
+        // let mut state = self.hdb.state_mut();
 
         // Process all honey badger output batches:
         while let Some(mut step) = self.step_queue.try_pop() {

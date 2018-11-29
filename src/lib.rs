@@ -77,6 +77,7 @@ pub use hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 pub use hydrabadger::Error;
 pub use hbbft::dynamic_honey_badger::Batch;
 pub use hydrabadger::StateDsct;
+pub use hydrabadger::key_gen;
 
 /// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
@@ -114,8 +115,8 @@ pub type EpochRx = mpsc::UnboundedReceiver<u64>;
 
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
-{
-}
+{}
+
 impl<C> Contribution for C where
     C: HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
 {}
@@ -207,13 +208,6 @@ pub enum NetworkState {
     Active(ActiveNetworkInfo),
 }
 
-/// Messages used during synchronous key generation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum KeyGenMessage {
-    Part(Part),
-    Ack(Ack),
-}
-
 /// Messages sent over the network between nodes.
 ///
 /// [`Message`](enum.WireMessageKind.html#variant.Message) variants are among
@@ -237,7 +231,7 @@ pub enum WireMessageKind<T> {
     // TODO(c0gent): Remove.
     Transaction(Uid, T),
     /// Messages used during synchronous key generation.
-    KeyGen(KeyGenMessage),
+    KeyGen(key_gen::Message),
     JoinPlan(JoinPlan<Uid>),
 }
 
@@ -285,18 +279,18 @@ impl<T: Contribution> WireMessage<T> {
         WireMessageKind::Message(src_uid, msg).into()
     }
 
-    pub fn key_gen(msg: KeyGenMessage) -> WireMessage<T> {
+    pub fn key_gen(msg: key_gen::Message) -> WireMessage<T> {
         WireMessageKind::KeyGen(msg).into()
     }
 
-    pub fn key_gen_part(part: Part) -> WireMessage<T> {
+    pub fn key_gen_part(instance_id: key_gen::InstanceId, part: Part) -> WireMessage<T> {
         // WireMessageKind::KeyGenPart(part).into()
-        WireMessage::key_gen(KeyGenMessage::Part(part))
+        WireMessage::key_gen(key_gen::Message::part(instance_id, part))
     }
 
-    pub fn key_gen_ack(ack: Ack) -> WireMessage<T> {
+    pub fn key_gen_ack(instance_id: key_gen::InstanceId, ack: Ack) -> WireMessage<T> {
         // WireMessageKind::KeyGenAck(outcome).into()
-        WireMessage::key_gen(KeyGenMessage::Ack(ack))
+        WireMessage::key_gen(key_gen::Message::ack(instance_id, ack))
     }
 
     pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage<T> {
@@ -435,6 +429,7 @@ pub enum InternalMessageKind<T: Contribution> {
     PeerDisconnect,
     NewIncomingConnection(InAddr, PublicKey, bool),
     NewOutgoingConnection,
+    NewKeyGenInstance(mpsc::UnboundedSender<key_gen::Message>),
 }
 
 /// A message between internal threads/tasks.
@@ -499,6 +494,13 @@ impl<T: Contribution> InternalMessage<T> {
             src_addr,
             InternalMessageKind::NewIncomingConnection(src_in_addr, src_pk, request_change_add),
         )
+    }
+
+    pub fn new_key_gen_instance(src_uid: Uid, src_addr: OutAddr,
+        tx: mpsc::UnboundedSender<key_gen::Message>) -> InternalMessage<T>
+    {
+        InternalMessage::new(Some(src_uid), src_addr,
+            InternalMessageKind::NewKeyGenInstance(tx))
     }
 
     pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage<T> {
