@@ -37,6 +37,8 @@ pub struct Handler<T: Contribution> {
     // TODO: Use a bounded tx/rx (find a sensible upper bound):
     batch_tx: BatchTx<T>,
     /// Distributed synchronous key generation instances.
+    //
+    // TODO: Move these to separate threads/tasks.
     key_gens: RefCell<HashMap<Uid, key_gen::Machine>>,
 }
 
@@ -158,35 +160,33 @@ impl<T: Contribution> Handler<T> {
     ) -> Result<(), Error> {
         use key_gen::{MessageKind, InstanceId};
 
-        let kind = msg.into_kind();
-
         match instance_id {
             InstanceId::User(id) => {
                 let mut key_gens = self.key_gens.borrow_mut();
                 match key_gens.get_mut(&id) {
-                    Some(ref mut kg) => match kind {
-                        MessageKind::Part(part) => {
-                            kg.handle_key_gen_part(src_uid, part, peers);
+                    Some(ref mut kg) => {
+                        kg.event_tx().unwrap().unbounded_send(msg.clone()).unwrap();
+
+                        match msg.into_kind() {
+                            MessageKind::Part(part) => {
+                                kg.handle_key_gen_part(src_uid, part, peers);
+                            }
+                            MessageKind::Ack(ack) => {
+                                kg.handle_key_gen_ack(src_uid, ack, peers)?;
+                            }
                         }
-                        MessageKind::Ack(ack) => {
-                            kg.handle_key_gen_ack(src_uid, ack, peers)?;
-                        }
-                        // MessageKind::InstanceId => panic!("InstanceId should not be sent \
-                        //     for BuiltIn key gen instances"),
                     }
                     None => error!("KeyGen message received with invalid instance"),
                 }
             }
             InstanceId::BuiltIn => {
-                match kind {
+                match msg.into_kind() {
                     MessageKind::Part(part) => {
                         self.handle_key_gen_part(src_uid, part, state, peers)?;
                     }
                     MessageKind::Ack(ack) => {
                         self.handle_key_gen_ack(src_uid, ack, state, peers)?;
                     }
-                    // MessageKind::InstanceId => panic!("InstanceId should not be sent \
-                    //     for BuiltIn key gen instances"),
                 }
             }
         }

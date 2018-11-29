@@ -24,44 +24,29 @@ pub enum InstanceId {
 pub enum MessageKind {
     Part(Part),
     Ack(Ack),
-    // InstanceId(InstanceId),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
-    // instance_id: InstanceId,
     kind: MessageKind,
 }
 
 impl Message {
-    pub fn part(/*instance_id: InstanceId, */part: Part) -> Message {
+    pub fn part(part: Part) -> Message {
         Message {
-            // instance_id,
             kind: MessageKind::Part(part),
         }
     }
 
-    pub fn ack(/*instance_id: InstanceId, */ack: Ack) -> Message {
+    pub fn ack(ack: Ack) -> Message {
         Message {
-            // instance_id,
             kind: MessageKind::Ack(ack),
         }
     }
 
-    // pub fn instance_id(instance_id: InstanceId) -> Message {
-    // 	Message {
-    //         // instance_id,
-    //         kind: MessageKind::InstanceId(instance_id),
-    //     }
-    // }
-
     pub fn kind(&self) -> &MessageKind {
     	&self.kind
     }
-
-    // pub fn into_parts(self) -> (InstanceId, MessageKind) {
-    // 	(self.instance_id, self.kind)
-    // }
 
     pub fn into_kind(self) -> MessageKind {
     	self.kind
@@ -188,8 +173,6 @@ impl Machine {
         local_uid: &Uid,
         local_sk: SecretKey,
         peers: &Peers<T>,
-        // config: &Config,
-        // threshold: usize,
     ) -> Result<(Part, Ack), Error> {
         let (part, ack);
         self.state = match self.state {
@@ -264,7 +247,6 @@ impl Machine {
                         &local_uid,
                         hdb.secret_key().clone(),
                         peers,
-                        // hdb.config().keygen_peer_count / 3,
                     )?;
 
                     trace!("KEY GENERATION: Sending initial parts and our own ack.");
@@ -333,7 +315,6 @@ impl Machine {
                 trace!("KEY GENERATION: Queueing `Ack`.");
                 self.ack_queue.push((*src_uid, ack.clone()));
 
-                // let peers = hdb.peers();
                 trace!(
                     "KEY GENERATION: Part from '{}' acknowledged. Broadcasting ack...",
                     src_uid
@@ -359,7 +340,6 @@ impl Machine {
         &mut self,
         src_uid: &Uid,
         ack: Ack,
-        // hdb: &Hydrabadger<T>,
         peers: &Peers<T>,
     ) -> Result<bool, Error> {
         let mut complete: Option<(SyncKeyGen<Uid>, PublicKey)> = None;
@@ -428,5 +408,9 @@ impl Machine {
     		}
     		_ => None
     	}
+    }
+
+    pub(super) fn event_tx(&self) -> Option<&mpsc::UnboundedSender<Message>> {
+        self.event_tx.as_ref()
     }
 }
