@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use crossbeam::queue::SegQueue;
+use rand::StdRng;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
     dynamic_honey_badger::{DynamicHoneyBadger, JoinPlan, Error as DhbError},
@@ -182,7 +183,7 @@ impl<T: Contribution> StateMachine<T> {
         local_uid: Uid,
         local_sk: SecretKey,
         jp: JoinPlan<Uid>,
-        cfg: &Config,
+        _cfg: &Config,
         step_queue: &SegQueue<Step<T>>,
     ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
         let iom_queue_ret;
@@ -190,9 +191,8 @@ impl<T: Contribution> StateMachine<T> {
             State::DeterminingNetworkState {
                 ref mut iom_queue, ..
             } => {
-                let (dhb, dhb_step) = DynamicHoneyBadger::builder()
-                    .era(cfg.start_epoch)
-                    .build_joining(local_uid, local_sk, jp)?;
+                let (dhb, dhb_step) = DynamicHoneyBadger::new_joining(local_uid, local_sk, jp,
+                    StdRng::new()?)?;
                 step_queue.push(dhb_step);
 
                 iom_queue_ret = iom_queue.take().unwrap();

@@ -57,7 +57,7 @@ version = "*"
 # git = "https://github.com/c0gent/hbbft"
 git = "https://github.com/poanetwork/hbbft"
 # branch = "master"
-rev = "9049dd17"
+rev = "ceb416a6"
 # path = "../hbbft"
 
 [profile.release]
