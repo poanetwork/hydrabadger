@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 
 # Starts a Hydrabadger node
 # =========================
@@ -24,7 +24,13 @@ printf -v HOST_PORT "3%03d" $HOST_ID
 printf -v PEER_0_PORT "3%03d" $PEER_0_ID
 printf -v PEER_1_PORT "3%03d" $PEER_1_ID
 
-HYDRABADGER_LOG=peer_node::hydrabadger=error,warn,info,$HYDRABADGER_LOG_ADDTL
+
+if [[ $HYDRABADGER_LOG ]]
+then
+    HYDRABADGER_LOG=$HYDRABADGER_LOG
+else
+    HYDRABADGER_LOG="info"
+fi
 
 if [[ $HYDRABADGER_RELEASE ]]
 then

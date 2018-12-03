@@ -635,6 +635,7 @@ impl<T: Contribution> Future for Handler<T> {
         while let Some(mut step) = self.step_queue.try_pop() {
             for batch in step.output.drain(..) {
                 info!("A HONEY BADGER BATCH WITH CONTRIBUTIONS IS BEING STREAMED...");
+                debug!("Batch:\n{:?}", batch);
 
                 let batch_epoch = batch.epoch();
                 let prev_epoch = self.hdb.set_current_epoch(batch_epoch + 1);
