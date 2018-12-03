@@ -547,7 +547,7 @@ impl<T: Contribution> Hydrabadger<T> {
         &self.inner.uid
     }
 
-    pub(super) fn secret_key(&self) -> &SecretKey {
+    pub fn secret_key(&self) -> &SecretKey {
         &self.inner.secret_key
     }
 
