@@ -124,7 +124,7 @@ impl<T: Contribution> Hydrabadger<T> {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config) -> Self {
         let uid = Uid::new();
-        let secret_key = SecretKey::rand(&mut rand::thread_rng());
+        let secret_key = SecretKey::rand(&mut rand::OsRng::new().expect("Unable to create rng"));
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
         let (batch_tx, batch_rx) = mpsc::unbounded();
