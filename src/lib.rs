@@ -1,9 +1,19 @@
 #![cfg_attr(feature = "nightly", feature(alloc_system))]
 #![cfg_attr(feature = "nightly", feature(proc_macro))]
-#![cfg_attr(feature = "cargo-clippy",
-            allow(large_enum_variant, new_without_default_derive, expect_fun_call, or_fun_call,
-                  useless_format, cyclomatic_complexity, needless_pass_by_value, module_inception,
-                  match_bool))]
+#![cfg_attr(
+    feature = "cargo-clippy",
+    allow(
+        large_enum_variant,
+        new_without_default_derive,
+        expect_fun_call,
+        or_fun_call,
+        useless_format,
+        cyclomatic_complexity,
+        needless_pass_by_value,
+        module_inception,
+        match_bool
+    )
+)]
 
 #[cfg(feature = "nightly")]
 extern crate alloc_system;
@@ -52,6 +62,14 @@ pub mod peer;
 
 use bytes::{Bytes, BytesMut};
 use futures::{sync::mpsc, AsyncSink, StartSend};
+use hbbft::{
+    crypto::{PublicKey, PublicKeySet, SecretKey, Signature},
+    dynamic_honey_badger::{
+        Change as DhbChange, DynamicHoneyBadger, JoinPlan, Message as DhbMessage,
+    },
+    sync_key_gen::{Ack, Part},
+    Contribution as HbbftContribution, DaStep as MessagingStep,
+};
 use rand::{Rand, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -61,23 +79,21 @@ use std::{
     net::SocketAddr,
     ops::Deref,
 };
-use tokio::{io, net::TcpStream, prelude::*, codec::{Framed, LengthDelimitedCodec}};
-use uuid::Uuid;
-use hbbft::{
-    crypto::{PublicKey, PublicKeySet, SecretKey, Signature},
-    dynamic_honey_badger::{JoinPlan, Message as DhbMessage, DynamicHoneyBadger, Change as DhbChange},
-    sync_key_gen::{Ack, Part},
-    DaStep as MessagingStep,
-    Contribution as HbbftContribution,
+use tokio::{
+    codec::{Framed, LengthDelimitedCodec},
+    io,
+    net::TcpStream,
+    prelude::*,
 };
+use uuid::Uuid;
 
-pub use blockchain::{Blockchain, MiningError};
-pub use hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
+pub use crate::blockchain::{Blockchain, MiningError};
+pub use crate::hydrabadger::{Config, Hydrabadger, HydrabadgerWeak};
 // TODO: Create a separate, library-wide error type.
-pub use hydrabadger::Error;
+pub use crate::hydrabadger::key_gen;
+pub use crate::hydrabadger::Error;
+pub use crate::hydrabadger::StateDsct;
 pub use hbbft::dynamic_honey_badger::Batch;
-pub use hydrabadger::StateDsct;
-pub use hydrabadger::key_gen;
 
 /// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
@@ -111,15 +127,15 @@ type EpochTx = mpsc::UnboundedSender<u64>;
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
 pub type EpochRx = mpsc::UnboundedReceiver<u64>;
 
-
-
 pub trait Contribution:
     HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
-{}
+{
+}
 
 impl<C> Contribution for C where
     C: HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
-{}
+{
+}
 
 /// A unique identifier.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -369,9 +385,10 @@ impl<T: Contribution> Stream for WireMessages<T> {
 
                 // Verify signature for certain variants.
                 match msg.kind {
-                    | WireMessageKind::Message(..)
-                    | WireMessageKind::KeyGen(..) => {
-                        let peer_pk = self.peer_pk.ok_or(Error::VerificationMessageReceivedUnknownPeer)?;
+                    WireMessageKind::Message(..) | WireMessageKind::KeyGen(..) => {
+                        let peer_pk = self
+                            .peer_pk
+                            .ok_or(Error::VerificationMessageReceivedUnknownPeer)?;
                         if !peer_pk.verify(&s_msg.sig, &s_msg.message) {
                             return Err(Error::InvalidSignature);
                         }
@@ -471,11 +488,19 @@ impl<T: Contribution> InternalMessage<T> {
     }
 
     pub fn hb_contribution(src_uid: Uid, src_addr: OutAddr, contrib: T) -> InternalMessage<T> {
-        InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbContribution(contrib))
+        InternalMessage::new(
+            Some(src_uid),
+            src_addr,
+            InternalMessageKind::HbContribution(contrib),
+        )
     }
 
     pub fn hb_vote(src_uid: Uid, src_addr: OutAddr, change: Change) -> InternalMessage<T> {
-        InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbChange(change))
+        InternalMessage::new(
+            Some(src_uid),
+            src_addr,
+            InternalMessageKind::HbChange(change),
+        )
     }
 
     pub fn peer_disconnect(src_uid: Uid, src_addr: OutAddr) -> InternalMessage<T> {
@@ -496,11 +521,16 @@ impl<T: Contribution> InternalMessage<T> {
         )
     }
 
-    pub fn new_key_gen_instance(src_uid: Uid, src_addr: OutAddr,
-        tx: mpsc::UnboundedSender<key_gen::Message>) -> InternalMessage<T>
-    {
-        InternalMessage::new(Some(src_uid), src_addr,
-            InternalMessageKind::NewKeyGenInstance(tx))
+    pub fn new_key_gen_instance(
+        src_uid: Uid,
+        src_addr: OutAddr,
+        tx: mpsc::UnboundedSender<key_gen::Message>,
+    ) -> InternalMessage<T> {
+        InternalMessage::new(
+            Some(src_uid),
+            src_addr,
+            InternalMessageKind::NewKeyGenInstance(tx),
+        )
     }
 
     pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage<T> {

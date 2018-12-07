@@ -1,6 +1,19 @@
 //! A hydrabadger consensus node.
 //!
 
+use super::{Error, Handler, StateDsct, StateMachine};
+use crate::peer::{PeerHandler, Peers};
+use crate::{
+    key_gen, BatchRx, Change, Contribution, EpochRx, EpochTx, InAddr, InternalMessage, InternalTx,
+    OutAddr, Uid, WireMessage, WireMessageKind, WireMessages,
+};
+use futures::{
+    future::{self, Either},
+    sync::mpsc,
+};
+use hbbft::crypto::{PublicKey, SecretKey};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use rand::{self, Rand};
 use std::{
     collections::HashSet,
     net::SocketAddr,
@@ -10,27 +23,12 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use rand::{self, Rand};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use futures::{
-    future::{self, Either},
-    sync::mpsc,
-};
 use tokio::{
     self,
     net::{TcpListener, TcpStream},
     prelude::*,
-    timer::{Interval, Delay},
+    timer::{Delay, Interval},
 };
-use hbbft::{
-    crypto::{PublicKey, SecretKey},
-};
-use peer::{PeerHandler, Peers};
-use {
-    Change, Contribution, InAddr, InternalMessage, InternalTx, OutAddr, Uid, WireMessage,
-    WireMessageKind, WireMessages, BatchRx, EpochTx, EpochRx, key_gen,
-};
-use super::{Error, Handler, StateMachine, StateDsct};
 
 // The number of random transactions to generate per interval.
 const DEFAULT_TXN_GEN_COUNT: usize = 5;
@@ -302,7 +300,10 @@ impl<T: Contribution> Hydrabadger<T> {
     pub fn new_key_gen_instance(&self) -> mpsc::UnboundedReceiver<key_gen::Message> {
         let (tx, rx) = mpsc::unbounded();
         self.send_internal(InternalMessage::new_key_gen_instance(
-            self.inner.uid, OutAddr(*self.inner.addr), tx));
+            self.inner.uid,
+            OutAddr(*self.inner.addr),
+            tx,
+        ));
         rx
     }
 
@@ -396,16 +397,21 @@ impl<T: Contribution> Hydrabadger<T> {
             })
             .map_err(move |err| {
                 if is_optimistic {
-                    warn!("Unable to connect to: {} ({e:?}: {e})", remote_addr, e=err);
+                    warn!(
+                        "Unable to connect to: {} ({e:?}: {e})",
+                        remote_addr,
+                        e = err
+                    );
                 } else {
-                    error!("Error connecting to: {} ({e:?}: {e})", remote_addr, e=err);
+                    error!("Error connecting to: {} ({e:?}: {e})", remote_addr, e = err);
                 }
             })
     }
 
-    fn generate_contributions(self, gen_txns: Option<fn(usize, usize) -> T>)
-        -> impl Future<Item = (), Error = ()>
-    {
+    fn generate_contributions(
+        self,
+        gen_txns: Option<fn(usize, usize) -> T>,
+    ) -> impl Future<Item = (), Error = ()> {
         if let Some(gen_txns) = gen_txns {
             let epoch_stream = self.register_epoch_listener();
             let gen_delay = self.inner.config.txn_gen_interval;
@@ -440,7 +446,6 @@ impl<T: Contribution> Hydrabadger<T> {
                 .map_err(|err| panic!("Contribution generation error: {:?}", err));
 
             Either::A(gen_cntrb)
-
         } else {
             Either::B(future::ok(()))
         }
@@ -510,10 +515,12 @@ impl<T: Contribution> Hydrabadger<T> {
         let local_sk = hdb.inner.secret_key.clone();
         let connect = future::lazy(move || {
             for &remote_addr in remotes.iter().filter(|&&ra| ra != hdb.inner.addr.0) {
-                tokio::spawn(
-                    hdb.clone()
-                        .connect_outgoing(remote_addr, local_sk.clone(), None, true),
-                );
+                tokio::spawn(hdb.clone().connect_outgoing(
+                    remote_addr,
+                    local_sk.clone(),
+                    None,
+                    true,
+                ));
             }
             Ok(())
         });
@@ -570,8 +577,12 @@ impl<T: Contribution> HydrabadgerWeak<T> {
     pub fn upgrade(self) -> Option<Hydrabadger<T>> {
         self.inner.upgrade().and_then(|inner| {
             self.handler.upgrade().and_then(|handler| {
-                self.batch_rx.upgrade().and_then(|batch_rx|{
-                    Some(Hydrabadger { inner, handler, batch_rx })
+                self.batch_rx.upgrade().and_then(|batch_rx| {
+                    Some(Hydrabadger {
+                        inner,
+                        handler,
+                        batch_rx,
+                    })
                 })
             })
         })

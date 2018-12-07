@@ -1,17 +1,17 @@
 //! Synchronous distributed key generation.
 
-use futures::sync::mpsc;
-use hydrabadger::hydrabadger::Hydrabadger;
+use super::Error;
+use crate::hydrabadger::hydrabadger::Hydrabadger;
+use crate::peer::Peers;
+use crate::{Contribution, NetworkState, Uid, WireMessage};
 use crossbeam::queue::SegQueue;
+use futures::sync::mpsc;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
 };
-use peer::Peers;
-use std::{collections::BTreeMap};
 use rand;
-use super::Error;
-use {Contribution, NetworkState, Uid, WireMessage};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum InstanceId {
@@ -45,14 +45,13 @@ impl Message {
     }
 
     pub fn kind(&self) -> &MessageKind {
-    	&self.kind
+        &self.kind
     }
 
     pub fn into_kind(self) -> MessageKind {
-    	self.kind
+        self.kind
     }
 }
-
 
 /// Key generation state.
 #[derive(Debug)]
@@ -70,20 +69,17 @@ pub(super) enum State {
         ack_count: usize,
     },
     Complete {
-    	sync_key_gen: Option<SyncKeyGen<Uid>>,
+        sync_key_gen: Option<SyncKeyGen<Uid>>,
         public_key: Option<PublicKey>,
     },
 }
 
 /// Forwards an `Ack` to a `SyncKeyGen` instance.
-fn handle_ack(
-    uid: &Uid,
-    ack: Ack,
-    ack_count: &mut usize,
-    sync_key_gen: &mut SyncKeyGen<Uid>,
-) {
+fn handle_ack(uid: &Uid, ack: Ack, ack_count: &mut usize, sync_key_gen: &mut SyncKeyGen<Uid>) {
     trace!("KEY GENERATION: Handling ack from '{}'...", uid);
-    let ack_outcome = sync_key_gen.handle_ack(uid, ack.clone()).expect("Failed to handle Ack.");
+    let ack_outcome = sync_key_gen
+        .handle_ack(uid, ack.clone())
+        .expect("Failed to handle Ack.");
     match ack_outcome {
         AckOutcome::Invalid(fault) => error!("Error handling ack: '{:?}':\n{:?}", ack, fault),
         AckOutcome::Valid => *ack_count += 1,
@@ -122,52 +118,52 @@ pub struct Machine {
 }
 
 impl Machine {
-	/// Creates and returns a new `Machine` in the `AwaitingPeers`
-	/// state.
-	pub fn awaiting_peers(
-		ack_queue: SegQueue<(Uid, Ack)>,
-		event_tx: Option<mpsc::UnboundedSender<Message>>,
-		instance_id: InstanceId,
-	) -> Machine {
-		Machine {
-			state: State::AwaitingPeers {
-				required_peers: Vec::new(),
-				available_peers: Vec::new(),
-			},
-			ack_queue,
-			event_tx,
-			instance_id,
-		}
-	}
+    /// Creates and returns a new `Machine` in the `AwaitingPeers`
+    /// state.
+    pub fn awaiting_peers(
+        ack_queue: SegQueue<(Uid, Ack)>,
+        event_tx: Option<mpsc::UnboundedSender<Message>>,
+        instance_id: InstanceId,
+    ) -> Machine {
+        Machine {
+            state: State::AwaitingPeers {
+                required_peers: Vec::new(),
+                available_peers: Vec::new(),
+            },
+            ack_queue,
+            event_tx,
+            instance_id,
+        }
+    }
 
-	/// Creates and returns a new `Machine` in the `Generating`
-	/// state.
-	pub fn generate<T: Contribution>(
-		local_uid: &Uid,
+    /// Creates and returns a new `Machine` in the `Generating`
+    /// state.
+    pub fn generate<T: Contribution>(
+        local_uid: &Uid,
         local_sk: SecretKey,
         peers: &Peers<T>,
         event_tx: mpsc::UnboundedSender<Message>,
         instance_id: InstanceId,
     ) -> Result<Machine, Error> {
-		let mut m = Machine {
-			state: State::AwaitingPeers {
-				required_peers: Vec::new(),
-				available_peers: Vec::new(),
-			},
-			ack_queue: SegQueue::new(),
-			event_tx: Some(event_tx),
-			instance_id: instance_id.clone(),
-		};
+        let mut m = Machine {
+            state: State::AwaitingPeers {
+                required_peers: Vec::new(),
+                available_peers: Vec::new(),
+            },
+            ack_queue: SegQueue::new(),
+            event_tx: Some(event_tx),
+            instance_id: instance_id.clone(),
+        };
 
-		let (part, ack) = m.set_generating_keys(local_uid, local_sk, peers)?;
+        let (part, ack) = m.set_generating_keys(local_uid, local_sk, peers)?;
 
-		peers.wire_to_validators(WireMessage::key_gen_part(instance_id.clone(), part));
+        peers.wire_to_validators(WireMessage::key_gen_part(instance_id.clone(), part));
         peers.wire_to_validators(WireMessage::key_gen_ack(instance_id, ack));
 
-		Ok(m)
-	}
+        Ok(m)
+    }
 
-	/// Sets the state to `AwaitingMorePeersForKeyGeneration`.
+    /// Sets the state to `AwaitingMorePeersForKeyGeneration`.
     pub(super) fn set_generating_keys<T: Contribution>(
         &mut self,
         local_uid: &Uid,
@@ -176,9 +172,7 @@ impl Machine {
     ) -> Result<(Part, Ack), Error> {
         let (part, ack);
         self.state = match self.state {
-            State::AwaitingPeers {
-                ..
-            } => {
+            State::AwaitingPeers { .. } => {
                 // let threshold = config.keygen_peer_count / 3;
                 let threshold = peers.count_validators() / 3;
 
@@ -192,24 +186,32 @@ impl Machine {
 
                 let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
 
-                let (mut sync_key_gen, opt_part) =
-                    SyncKeyGen::new(&mut rng, *local_uid, local_sk, public_keys.clone(), threshold)
-                        .map_err(Error::SyncKeyGenNew)?;
+                let (mut sync_key_gen, opt_part) = SyncKeyGen::new(
+                    &mut rng,
+                    *local_uid,
+                    local_sk,
+                    public_keys.clone(),
+                    threshold,
+                )
+                .map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
                 trace!("KEY GENERATION: Handling our own `Part`...");
-                ack = match sync_key_gen.handle_part(&mut rng, &local_uid, part.clone())
-                                        .expect("Handling our own Part has failed") {
+                ack = match sync_key_gen
+                    .handle_part(&mut rng, &local_uid, part.clone())
+                    .expect("Handling our own Part has failed")
+                {
                     PartOutcome::Valid(Some(ack)) => ack,
-                    PartOutcome::Invalid(faults) => panic!(
-                        "Invalid part (FIXME: handle): {:?}", faults),
+                    PartOutcome::Invalid(faults) => {
+                        panic!("Invalid part (FIXME: handle): {:?}", faults)
+                    }
                     PartOutcome::Valid(None) => panic!("No Ack produced when handling Part."),
                 };
 
                 trace!("KEY GENERATION: Queueing our own `Ack`...");
                 self.ack_queue.push((*local_uid, ack.clone()));
 
-            	State::Generating {
+                State::Generating {
                     sync_key_gen: Some(sync_key_gen),
                     public_key: Some(pk),
                     public_keys,
@@ -228,14 +230,14 @@ impl Machine {
     /// Notify this key generation instance that peers have been added.
     //
     // TODO: Move some of this logic back to handler.
-	pub(super) fn add_peers<T: Contribution>(
+    pub(super) fn add_peers<T: Contribution>(
         &mut self,
         peers: &Peers<T>,
         hdb: &Hydrabadger<T>,
         net_state: NetworkState,
     ) -> Result<(), Error> {
-		match self.state {
-			State::AwaitingPeers { .. } => {
+        match self.state {
+            State::AwaitingPeers { .. } => {
                 if peers.count_validators() >= hdb.config().keygen_peer_count {
                     info!("BEGINNING KEY GENERATION");
 
@@ -243,23 +245,24 @@ impl Machine {
                     let local_in_addr = *hdb.addr();
                     let local_pk = hdb.secret_key().public_key();
 
-                    let (part, ack) = self.set_generating_keys(
-                        &local_uid,
-                        hdb.secret_key().clone(),
-                        peers,
-                    )?;
+                    let (part, ack) =
+                        self.set_generating_keys(&local_uid, hdb.secret_key().clone(), peers)?;
 
                     trace!("KEY GENERATION: Sending initial parts and our own ack.");
-                    peers.wire_to_validators(
-                        WireMessage::hello_from_validator(
-                            local_uid,
-                            local_in_addr,
-                            local_pk,
-                            net_state,
-                        ),
-                    );
-                    peers.wire_to_validators(WireMessage::key_gen_part(self.instance_id.clone(), part));
-                    peers.wire_to_validators(WireMessage::key_gen_ack(self.instance_id.clone(), ack));
+                    peers.wire_to_validators(WireMessage::hello_from_validator(
+                        local_uid,
+                        local_in_addr,
+                        local_pk,
+                        net_state,
+                    ));
+                    peers.wire_to_validators(WireMessage::key_gen_part(
+                        self.instance_id.clone(),
+                        part,
+                    ));
+                    peers.wire_to_validators(WireMessage::key_gen_ack(
+                        self.instance_id.clone(),
+                        ack,
+                    ));
                 }
             }
             State::Generating { .. } => {
@@ -271,17 +274,17 @@ impl Machine {
             State::Complete { .. } => {
                 warn!("Ignoring new established peer signal while key gen `State::Complete`.");
             }
-		}
-		Ok(())
-	}
+        }
+        Ok(())
+    }
 
-	/// Handles a received `Part`.
-	pub(super) fn handle_key_gen_part<T: Contribution>(
-		&mut self,
-		src_uid: &Uid,
-		part: Part,
-		peers: &Peers<T>
-	) {
+    /// Handles a received `Part`.
+    pub(super) fn handle_key_gen_part<T: Contribution>(
+        &mut self,
+        src_uid: &Uid,
+        part: Part,
+        peers: &Peers<T>,
+    ) {
         match self.state {
             State::Generating {
                 ref mut sync_key_gen,
@@ -292,7 +295,7 @@ impl Machine {
                 // TODO: Move this match block into a function somewhere for re-use:
                 trace!("KEY GENERATION: Handling part from '{}'...", src_uid);
                 let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
-                let mut skg = sync_key_gen.as_mut().unwrap();
+                let skg = sync_key_gen.as_mut().unwrap();
                 let ack = match skg.handle_part(&mut rng, src_uid, part) {
                     Ok(PartOutcome::Valid(Some(ack))) => ack,
                     Ok(PartOutcome::Invalid(faults)) => panic!(
@@ -352,19 +355,21 @@ impl Machine {
                 ref mut ack_count,
                 ..
             } => {
-        		{
-	                let mut skg = sync_key_gen.as_mut().unwrap();
+                {
+                    let skg = sync_key_gen.as_mut().unwrap();
 
-	                trace!("KEY GENERATION: Queueing `Ack`.");
-	                self.ack_queue.push((*src_uid, ack.clone()));
+                    trace!("KEY GENERATION: Queueing `Ack`.");
+                    self.ack_queue.push((*src_uid, ack.clone()));
 
-	                handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, peers);
-	            };
+                    handle_queued_acks(&self.ack_queue, *part_count, ack_count, skg, peers);
+                };
 
-	            let node_n = peers.count_validators() + 1;
+                let node_n = peers.count_validators() + 1;
 
-                if sync_key_gen.as_ref().unwrap().count_complete() == node_n && *ack_count >= node_n * node_n {
-                	let skg = sync_key_gen.take().unwrap();
+                if sync_key_gen.as_ref().unwrap().count_complete() == node_n
+                    && *ack_count >= node_n * node_n
+                {
+                    let skg = sync_key_gen.take().unwrap();
                     info!("KEY GENERATION: All acks received and handled.");
                     debug!("   Peers complete: {}", skg.count_complete());
                     debug!("   Part count: {}", part_count);
@@ -378,36 +383,42 @@ impl Machine {
         }
 
         match complete {
-        	Some((sync_key_gen, public_key)) => {
-	        	self.state = State::Complete { sync_key_gen: Some(sync_key_gen), public_key: Some(public_key) };
-	        	Ok(true)
-	        },
-	        None => Ok(false),
+            Some((sync_key_gen, public_key)) => {
+                self.state = State::Complete {
+                    sync_key_gen: Some(sync_key_gen),
+                    public_key: Some(public_key),
+                };
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
     /// Returns the state of this key generation instance.
     pub(super) fn state(&self) -> &State {
-    	&self.state
+        &self.state
     }
 
     /// Returns true if this key generation instance is awaiting more peers.
     pub(super) fn is_awaiting_peers(&self) -> bool {
-    	match self.state {
-    		State::AwaitingPeers { .. } => true,
-    		_ => false,
-    	}
+        match self.state {
+            State::AwaitingPeers { .. } => true,
+            _ => false,
+        }
     }
 
     /// Returns the `SyncKeyGen` instance and `PublicKey` if this key
     /// generation instance is complete.
     pub(super) fn complete(&mut self) -> Option<(SyncKeyGen<Uid>, PublicKey)> {
-    	match self.state {
-    		State::Complete { ref mut sync_key_gen, ref mut public_key } => {
-    			sync_key_gen.take().and_then(|skg| public_key.take().map(|pk| (skg, pk)))
-    		}
-    		_ => None
-    	}
+        match self.state {
+            State::Complete {
+                ref mut sync_key_gen,
+                ref mut public_key,
+            } => sync_key_gen
+                .take()
+                .and_then(|skg| public_key.take().map(|pk| (skg, pk))),
+            _ => None,
+        }
     }
 
     pub(super) fn event_tx(&self) -> Option<&mpsc::UnboundedSender<Message>> {

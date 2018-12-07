@@ -3,6 +3,7 @@ name = "hydrabadger"
 version = "0.1.0"
 authors = ["c0gent <nsan1129@gmail.com>"]
 autobins = false
+edition = "2018"
 
 # [[bin]]
 # name = "simulation"

@@ -4,26 +4,22 @@
 //!     * Do not make state changes directly in this module (use closures, etc.).
 //!
 
-
-use std::{
-    collections::HashMap,
-    cell::RefCell,
+use super::WIRE_MESSAGE_RETRY_MAX;
+use super::{Error, Hydrabadger, InputOrMessage, State, StateDsct, StateMachine};
+use crate::peer::Peers;
+use crate::{
+    key_gen, BatchTx, Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
+    NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind,
 };
 use crossbeam::queue::SegQueue;
-use tokio::{self, prelude::*};
 use hbbft::{
     crypto::PublicKey,
-    dynamic_honey_badger::{ChangeState, JoinPlan, Change as DhbChange},
+    dynamic_honey_badger::{Change as DhbChange, ChangeState, JoinPlan},
     sync_key_gen::{Ack, Part},
     Target,
 };
-use peer::Peers;
-use {
-    Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
-    NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, BatchTx,
-    key_gen};
-use super::WIRE_MESSAGE_RETRY_MAX;
-use super::{Error, Hydrabadger, InputOrMessage, StateMachine, State, StateDsct};
+use std::{cell::RefCell, collections::HashMap};
+use tokio::{self, prelude::*};
 
 /// Hydrabadger event (internal message) handler.
 pub struct Handler<T: Contribution> {
@@ -43,7 +39,11 @@ pub struct Handler<T: Contribution> {
 }
 
 impl<T: Contribution> Handler<T> {
-    pub(super) fn new(hdb: Hydrabadger<T>, peer_internal_rx: InternalRx<T>, batch_tx: BatchTx<T>) -> Handler<T> {
+    pub(super) fn new(
+        hdb: Hydrabadger<T>,
+        peer_internal_rx: InternalRx<T>,
+        batch_tx: BatchTx<T>,
+    ) -> Handler<T> {
         Handler {
             hdb,
             peer_internal_rx,
@@ -69,7 +69,9 @@ impl<T: Contribution> Handler<T> {
             StateDsct::KeyGen => {
                 // TODO: Should network state simply be stored within key_gen?
                 let net_state = state.network_state(&peers);
-                state.key_gen_mut().unwrap()
+                state
+                    .key_gen_mut()
+                    .unwrap()
                     .add_peers(peers, &self.hdb, net_state)?;
             }
             StateDsct::Observer | StateDsct::Validator => {
@@ -78,7 +80,8 @@ impl<T: Contribution> Handler<T> {
                 if request_change_add {
                     let dhb = state.dhb_mut().unwrap();
                     info!("Change-Adding ('{}') to honey badger.", src_uid);
-                    let step = dhb.vote_to_add(src_uid, src_pk)
+                    let step = dhb
+                        .vote_to_add(src_uid, src_pk)
                         .expect("Error adding new peer to HB");
                     self.step_queue.push(step);
                 }
@@ -98,18 +101,24 @@ impl<T: Contribution> Handler<T> {
     }
 
     /// Handles a received `Part`.
-    fn handle_key_gen_part(&self, src_uid: &Uid, part: Part, state: &mut StateMachine<T>, peers: &Peers<T>)
-        -> Result<(), Error>
-    {
+    fn handle_key_gen_part(
+        &self,
+        src_uid: &Uid,
+        part: Part,
+        state: &mut StateMachine<T>,
+        peers: &Peers<T>,
+    ) -> Result<(), Error> {
         match state.state {
-            State::KeyGen { ref mut key_gen, .. } => {
+            State::KeyGen {
+                ref mut key_gen, ..
+            } => {
                 key_gen.handle_key_gen_part(src_uid, part, peers);
             }
-            State::DeterminingNetworkState { ref network_state, .. } => {
-                match network_state.is_some() {
-                    true => unimplemented!(),
-                    false => unimplemented!(),
-                }
+            State::DeterminingNetworkState {
+                ref network_state, ..
+            } => match network_state.is_some() {
+                true => unimplemented!(),
+                false => unimplemented!(),
             },
             ref s => panic!(
                 "::handle_key_gen_part: State must be `GeneratingKeys`. \
@@ -131,7 +140,9 @@ impl<T: Contribution> Handler<T> {
         let mut complete = false;
 
         match state.state {
-            State::KeyGen { ref mut key_gen, .. } => {
+            State::KeyGen {
+                ref mut key_gen, ..
+            } => {
                 if key_gen.handle_key_gen_ack(src_uid, ack, peers)? {
                     complete = true;
                 }
@@ -158,7 +169,7 @@ impl<T: Contribution> Handler<T> {
         state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        use key_gen::{MessageKind, InstanceId};
+        use crate::key_gen::{InstanceId, MessageKind};
 
         match instance_id {
             InstanceId::User(id) => {
@@ -179,16 +190,14 @@ impl<T: Contribution> Handler<T> {
                     None => error!("KeyGen message received with invalid instance"),
                 }
             }
-            InstanceId::BuiltIn => {
-                match msg.into_kind() {
-                    MessageKind::Part(part) => {
-                        self.handle_key_gen_part(src_uid, part, state, peers)?;
-                    }
-                    MessageKind::Ack(ack) => {
-                        self.handle_key_gen_ack(src_uid, ack, state, peers)?;
-                    }
+            InstanceId::BuiltIn => match msg.into_kind() {
+                MessageKind::Part(part) => {
+                    self.handle_key_gen_part(src_uid, part, state, peers)?;
                 }
-            }
+                MessageKind::Ack(ack) => {
+                    self.handle_key_gen_ack(src_uid, ack, state, peers)?;
+                }
+            },
         }
 
         Ok(())
@@ -295,8 +304,11 @@ impl<T: Contribution> Handler<T> {
         _state: &mut StateMachine<T>,
         peers: &Peers<T>,
     ) -> Result<(), Error> {
-        peers.wire_to_validators(WireMessage::hello_request_change_add(*self.hdb.uid(),
-            *self.hdb.addr(), self.hdb.secret_key().public_key()));
+        peers.wire_to_validators(WireMessage::hello_request_change_add(
+            *self.hdb.uid(),
+            *self.hdb.addr(),
+            self.hdb.secret_key().public_key(),
+        ));
         Ok(())
     }
 
@@ -324,7 +336,10 @@ impl<T: Contribution> Handler<T> {
                 let mut reset_fresh = false;
 
                 match state.state {
-                    State::DeterminingNetworkState { ref mut network_state, .. } => {
+                    State::DeterminingNetworkState {
+                        ref mut network_state,
+                        ..
+                    } => {
                         *network_state = Some(NetworkState::Active(net_info.clone()));
                     }
                     State::KeyGen { ref key_gen, .. } => {
@@ -504,8 +519,13 @@ impl<T: Contribution> Handler<T> {
                 let new_id = Uid::new();
                 // tx.unbounded_send(key_gen::Message::instance_id().unwrap();
                 let instance_id = key_gen::InstanceId::User(new_id.clone());
-                let key_gen = key_gen::Machine::generate(self.hdb.uid(), self.hdb.secret_key().clone(),
-                    &peers, tx, instance_id)?;
+                let key_gen = key_gen::Machine::generate(
+                    self.hdb.uid(),
+                    self.hdb.secret_key().clone(),
+                    &peers,
+                    tx,
+                    instance_id,
+                )?;
                 self.key_gens.borrow_mut().insert(new_id, key_gen);
             }
 
@@ -559,7 +579,13 @@ impl<T: Contribution> Handler<T> {
                 }
 
                 WireMessageKind::KeyGen(instance_id, msg) => {
-                    self.handle_key_gen_message(instance_id, msg, &src_uid.unwrap(), state, &self.hdb.peers())?;
+                    self.handle_key_gen_message(
+                        instance_id,
+                        msg,
+                        &src_uid.unwrap(),
+                        state,
+                        &self.hdb.peers(),
+                    )?;
                 }
 
                 // Output by validators when a batch with a `ChangeState`
@@ -712,9 +738,7 @@ impl<T: Contribution> Future for Handler<T> {
                         );
                     }
                     Target::All => {
-                        peers.wire_to_all(
-                            WireMessage::message(*self.hdb.uid(), hb_msg.message),
-                        );
+                        peers.wire_to_all(WireMessage::message(*self.hdb.uid(), hb_msg.message));
                     }
                 }
             }

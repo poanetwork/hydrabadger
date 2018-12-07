@@ -2,10 +2,14 @@
 
 #![allow(unused_imports, dead_code, unused_variables, unused_mut)]
 
+use crate::hydrabadger::{Error, Hydrabadger};
+use crate::{
+    Contribution, InAddr, InternalMessage, OutAddr, Uid, WireMessage, WireMessageKind,
+    WireMessages, WireRx, WireTx,
+};
 use futures::sync::mpsc;
 use hbbft::crypto::PublicKey;
 use hbbft::dynamic_honey_badger::Input as HbInput;
-use hydrabadger::{Error, Hydrabadger};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -15,10 +19,6 @@ use std::{
     },
 };
 use tokio::prelude::*;
-use {
-    Contribution, InAddr, InternalMessage, OutAddr, Uid, WireMessage, WireMessageKind,
-    WireMessages, WireRx, WireTx,
-};
 
 /// The state for each connected client.
 pub struct PeerHandler<T: Contribution> {
@@ -527,7 +527,8 @@ impl<T: Contribution> Peers<T> {
     }
 
     pub(crate) fn wire_to_all(&self, msg: WireMessage<T>) {
-        for (_p_addr, peer) in self.peers
+        for (_p_addr, peer) in self
+            .peers
             .iter()
             .filter(|(&p_addr, _)| p_addr != OutAddr(self.local_addr.0))
         {
@@ -549,14 +550,17 @@ impl<T: Contribution> Peers<T> {
     ///
     /// If the target is not an established node, the message will be returned
     /// along with an incremented retry count.
-    pub(crate) fn wire_to(&self, tar_uid: Uid, msg: WireMessage<T>, retry_count: usize)
-        -> Option<(Uid, WireMessage<T>, usize)>
-    {
+    pub(crate) fn wire_to(
+        &self,
+        tar_uid: Uid,
+        msg: WireMessage<T>,
+        retry_count: usize,
+    ) -> Option<(Uid, WireMessage<T>, usize)> {
         match self.get_by_uid(&tar_uid) {
             Some(p) => {
                 p.tx().unbounded_send(msg).unwrap();
                 None
-            },
+            }
             None => {
                 info!(
                     "Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
