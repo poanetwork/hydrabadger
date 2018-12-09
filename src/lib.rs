@@ -42,7 +42,7 @@ extern crate uuid;
 extern crate serde_derive;
 extern crate bincode;
 extern crate clear_on_drop;
-extern crate hbbft;
+pub extern crate hbbft;
 extern crate parking_lot;
 extern crate serde;
 extern crate serde_bytes;
