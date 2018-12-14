@@ -3,9 +3,10 @@ mod hydrabadger;
 pub mod key_gen;
 mod state;
 
+use rand::Rand;
 use self::handler::Handler;
 use self::state::{State, StateMachine};
-use crate::{Change, Message, Uid};
+use crate::{Change, Message};
 use bincode;
 use hbbft::{dynamic_honey_badger::Error as DhbError, sync_key_gen::Error as SyncKeyGenError};
 use std;
@@ -18,10 +19,10 @@ pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
-pub enum InputOrMessage<T> {
-    Change(Change),
+pub enum InputOrMessage<T, N: Ord + Rand> {
+    Change(Change<N>),
     Contribution(T),
-    Message(Uid, Message),
+    Message(N, Message<N>),
 }
 
 // TODO: Move this up to `lib.rs` or, preferably, create another error type

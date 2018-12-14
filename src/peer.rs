@@ -5,11 +5,13 @@
 use crate::hydrabadger::{Error, Hydrabadger};
 use crate::{
     Contribution, InAddr, InternalMessage, OutAddr, Uid, WireMessage, WireMessageKind,
-    WireMessages, WireRx, WireTx,
+    WireMessages, WireRx, WireTx, NodeId,
 };
 use futures::sync::mpsc;
-use hbbft::crypto::PublicKey;
-use hbbft::dynamic_honey_badger::Input as HbInput;
+use hbbft::{
+    crypto::PublicKey,
+    dynamic_honey_badger::Input as HbInput,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -21,44 +23,44 @@ use std::{
 use tokio::prelude::*;
 
 /// The state for each connected client.
-pub struct PeerHandler<T: Contribution> {
-    // Peer uid.
-    uid: Option<Uid>,
+pub struct PeerHandler<C: Contribution, N: NodeId> {
+    // Peer nid.
+    nid: Option<N>,
 
     // The incoming stream of messages:
-    wire_msgs: WireMessages<T>,
+    wire_msgs: WireMessages<C, N>,
 
     /// Handle to the shared message state.
-    hdb: Hydrabadger<T>,
+    hdb: Hydrabadger<C, N>,
 
     // TODO: Consider adding back a separate clone of `peer_internal_tx`. Is
     // there any difference if capacity isn't an issue? -- doubtful
     /// Receive half of the message channel.
-    rx: WireRx<T>,
+    rx: WireRx<C, N>,
 
     /// Peer socket address.
     out_addr: OutAddr,
 }
 
-impl<T: Contribution> PeerHandler<T> {
+impl<C: Contribution, N: NodeId> PeerHandler<C, N> {
     /// Create a new instance of `Peer`.
     pub fn new(
-        pub_info: Option<(Uid, InAddr, PublicKey)>,
-        hdb: Hydrabadger<T>,
-        mut wire_msgs: WireMessages<T>,
-    ) -> PeerHandler<T> {
+        pub_info: Option<(N, InAddr, PublicKey)>,
+        hdb: Hydrabadger<C, N>,
+        mut wire_msgs: WireMessages<C, N>,
+    ) -> PeerHandler<C, N> {
         // Get the client socket address
         let out_addr = OutAddr(wire_msgs.socket().peer_addr().unwrap());
 
         // Create a channel for this peer
         let (tx, rx) = mpsc::unbounded();
 
-        pub_info.as_ref().map(|(uid, _, _)| *uid);
+        pub_info.as_ref().map(|(nid, _, _)| nid.clone());
 
-        let uid = match pub_info {
-            Some((uid, _, pk)) => {
+        let nid = match pub_info {
+            Some((ref nid, _, pk)) => {
                 wire_msgs.set_peer_public_key(pk);
-                Some(uid)
+                Some(nid.clone())
             }
             None => None,
         };
@@ -67,7 +69,7 @@ impl<T: Contribution> PeerHandler<T> {
         hdb.peers_mut().add(out_addr, tx, pub_info);
 
         PeerHandler {
-            uid,
+            nid,
             wire_msgs,
             hdb,
             rx,
@@ -75,7 +77,7 @@ impl<T: Contribution> PeerHandler<T> {
         }
     }
 
-    pub(crate) fn hdb(&self) -> &Hydrabadger<T> {
+    pub(crate) fn hdb(&self) -> &Hydrabadger<C, N> {
         &self.hdb
     }
 
@@ -85,7 +87,7 @@ impl<T: Contribution> PeerHandler<T> {
 }
 
 /// A future representing the client connection.
-impl<T: Contribution> Future for PeerHandler<T> {
+impl<C: Contribution, N: NodeId> Future for PeerHandler<C, N> {
     type Item = ();
     type Error = Error;
 
@@ -120,61 +122,61 @@ impl<T: Contribution> Future for PeerHandler<T> {
 
             if let Some(msg) = message {
                 match msg.into_kind() {
-                    WireMessageKind::HelloRequestChangeAdd(src_uid, _in_addr, _pub_key) => {
+                    WireMessageKind::HelloRequestChangeAdd(src_nid, _in_addr, _pub_key) => {
                         error!(
                             "Duplicate `WireMessage::HelloRequestChangeAdd` \
-                             received from '{}'",
-                            src_uid
+                             received from '{:?}'",
+                            src_nid
                         );
                     }
-                    WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state) => {
-                        self.uid = Some(src_uid);
+                    WireMessageKind::WelcomeReceivedChangeAdd(src_nid, pk, net_state) => {
+                        self.nid = Some(src_nid.clone());
                         self.wire_msgs.set_peer_public_key(pk);
                         self.hdb.send_internal(InternalMessage::wire(
-                            Some(src_uid),
+                            Some(src_nid.clone()),
                             self.out_addr,
-                            WireMessage::welcome_received_change_add(src_uid, pk, net_state),
+                            WireMessage::welcome_received_change_add(src_nid.clone(), pk, net_state),
                         ));
                     }
-                    WireMessageKind::HelloFromValidator(src_uid, in_addr, pk, net_state) => {
-                        self.uid = Some(src_uid);
+                    WireMessageKind::HelloFromValidator(src_nid, in_addr, pk, net_state) => {
+                        self.nid = Some(src_nid.clone());
                         self.wire_msgs.set_peer_public_key(pk);
                         self.hdb.send_internal(InternalMessage::wire(
-                            Some(src_uid),
+                            Some(src_nid.clone()),
                             self.out_addr,
-                            WireMessage::hello_from_validator(src_uid, in_addr, pk, net_state),
+                            WireMessage::hello_from_validator(src_nid.clone(), in_addr, pk, net_state),
                         ));
                     }
-                    WireMessageKind::Message(src_uid, msg) => {
-                        if let Some(peer_uid) = self.uid.as_ref() {
-                            debug_assert_eq!(src_uid, *peer_uid);
+                    WireMessageKind::Message(src_nid, msg) => {
+                        if let Some(peer_nid) = self.nid.as_ref() {
+                            debug_assert_eq!(src_nid, *peer_nid);
                         }
 
                         self.hdb.send_internal(InternalMessage::hb_message(
-                            src_uid,
+                            src_nid,
                             self.out_addr,
                             msg,
                         ))
                     }
-                    WireMessageKind::Transaction(src_uid, txn) => {
-                        if let Some(peer_uid) = self.uid.as_ref() {
-                            debug_assert_eq!(src_uid, *peer_uid);
+                    WireMessageKind::Transaction(src_nid, txn) => {
+                        if let Some(peer_nid) = self.nid.as_ref() {
+                            debug_assert_eq!(src_nid, *peer_nid);
                         }
 
                         self.hdb.send_internal(InternalMessage::hb_contribution(
-                            src_uid,
+                            src_nid,
                             self.out_addr,
                             txn,
                         ))
                     }
                     kind => self.hdb.send_internal(InternalMessage::wire(
-                        self.uid,
+                        self.nid.clone(),
                         self.out_addr,
                         kind.into(),
                     )),
                 }
             } else {
-                info!("Peer ({}: '{:?}') disconnected.", self.out_addr, self.uid);
+                info!("Peer ({}: '{:?}') disconnected.", self.out_addr, self.nid);
                 return Ok(Async::Ready(()));
             }
         }
@@ -183,45 +185,45 @@ impl<T: Contribution> Future for PeerHandler<T> {
     }
 }
 
-impl<T: Contribution> Drop for PeerHandler<T> {
+impl<C: Contribution, N: NodeId> Drop for PeerHandler<C, N> {
     fn drop(&mut self) {
         debug!(
-            "Removing peer ({}: '{}') from the list of peers.",
+            "Removing peer ({}: '{:?}') from the list of peers.",
             self.out_addr,
-            self.uid.unwrap()
+            self.nid.clone().unwrap()
         );
         // Remove peer transmitter from the lists:
         self.hdb.peers_mut().remove(&self.out_addr);
 
-        if let Some(uid) = self.uid {
+        if let Some(nid) = self.nid.clone() {
             debug!(
-                "Sending peer ({}: '{}') disconnect internal message.",
+                "Sending peer ({}: '{:?}') disconnect internal message.",
                 self.out_addr,
-                self.uid.unwrap()
+                self.nid.clone().unwrap()
             );
 
             self.hdb
-                .send_internal(InternalMessage::peer_disconnect(uid, self.out_addr));
+                .send_internal(InternalMessage::peer_disconnect(nid, self.out_addr));
         }
     }
 }
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
-enum State {
+enum State<N> {
     Handshaking,
     PendingJoinInfo {
-        uid: Uid,
+        nid: N,
         in_addr: InAddr,
         pk: PublicKey,
     },
     EstablishedObserver {
-        uid: Uid,
+        nid: N,
         in_addr: InAddr,
         pk: PublicKey,
     },
     EstablishedValidator {
-        uid: Uid,
+        nid: N,
         in_addr: InAddr,
         pk: PublicKey,
     },
@@ -229,22 +231,22 @@ enum State {
 
 /// Nodes of the network.
 #[derive(Clone, Debug)]
-pub struct Peer<T: Contribution> {
+pub struct Peer<C: Contribution, N: NodeId> {
     out_addr: OutAddr,
-    tx: WireTx<T>,
-    state: State,
+    tx: WireTx<C, N>,
+    state: State<N>,
 }
 
-impl<T: Contribution> Peer<T> {
+impl<C: Contribution, N: NodeId> Peer<C, N> {
     /// Returns a new `Peer`
     fn new(
         out_addr: OutAddr,
-        tx: WireTx<T>,
-        pub_info: Option<(Uid, InAddr, PublicKey)>,
-    ) -> Peer<T> {
+        tx: WireTx<C, N>,
+        pub_info: Option<(N, InAddr, PublicKey)>,
+    ) -> Peer<C, N> {
         let state = match pub_info {
             None => State::Handshaking,
-            Some((uid, in_addr, pk)) => State::EstablishedValidator { uid, in_addr, pk },
+            Some((nid, in_addr, pk)) => State::EstablishedValidator { nid, in_addr, pk },
         };
 
         Peer {
@@ -255,10 +257,10 @@ impl<T: Contribution> Peer<T> {
     }
 
     /// Sets a peer state to `State::PendingJoinInfo` and stores public info.
-    fn set_pending(&mut self, pub_info: (Uid, InAddr, PublicKey)) {
+    fn set_pending(&mut self, pub_info: (N, InAddr, PublicKey)) {
         self.state = match self.state {
             State::Handshaking => State::PendingJoinInfo {
-                uid: pub_info.0,
+                nid: pub_info.0,
                 in_addr: pub_info.1,
                 pk: pub_info.2,
             },
@@ -272,8 +274,8 @@ impl<T: Contribution> Peer<T> {
     /// Sets a peer state to `State::EstablishedObserver` and stores public info.
     fn establish_observer(&mut self) {
         self.state = match self.state {
-            State::PendingJoinInfo { uid, in_addr, pk } => {
-                State::EstablishedObserver { uid, in_addr, pk }
+            State::PendingJoinInfo { ref nid, in_addr, pk } => {
+                State::EstablishedObserver { nid: nid.clone(), in_addr, pk }
             }
             _ => panic!(
                 "Peer::establish_observer: Can only establish observer when \
@@ -283,11 +285,11 @@ impl<T: Contribution> Peer<T> {
     }
 
     /// Sets a peer state to `State::EstablishedValidator` and stores public info.
-    fn establish_validator(&mut self, pub_info: Option<(Uid, InAddr, PublicKey)>) {
+    fn establish_validator(&mut self, pub_info: Option<(N, InAddr, PublicKey)>) {
         self.state = match self.state {
             State::Handshaking => match pub_info {
                 Some(pi) => State::EstablishedValidator {
-                    uid: pi.0,
+                    nid: pi.0,
                     in_addr: pi.1,
                     pk: pi.2,
                 },
@@ -298,14 +300,14 @@ impl<T: Contribution> Peer<T> {
                     );
                 }
             },
-            State::EstablishedObserver { uid, in_addr, pk } => {
+            State::EstablishedObserver { ref nid, in_addr, pk } => {
                 if pub_info.is_some() {
                     panic!(
                         "Peer::establish_validator: `pub_info` must be `None` \
                          when upgrading an observer node."
                     );
                 }
-                State::EstablishedValidator { uid, in_addr, pk }
+                State::EstablishedValidator { nid: nid.clone(), in_addr, pk }
             }
             _ => panic!(
                 "Peer::establish_validator: Can only establish validator when \
@@ -315,12 +317,12 @@ impl<T: Contribution> Peer<T> {
     }
 
     /// Returns the peer's unique identifier.
-    pub fn uid(&self) -> Option<&Uid> {
+    pub fn node_id(&self) -> Option<&N> {
         match self.state {
             State::Handshaking => None,
-            State::PendingJoinInfo { ref uid, .. } => Some(uid),
-            State::EstablishedObserver { ref uid, .. } => Some(uid),
-            State::EstablishedValidator { ref uid, .. } => Some(uid),
+            State::PendingJoinInfo { ref nid, .. } => Some(nid),
+            State::EstablishedObserver { ref nid, .. } => Some(nid),
+            State::EstablishedValidator { ref nid, .. } => Some(nid),
         }
     }
 
@@ -350,24 +352,24 @@ impl<T: Contribution> Peer<T> {
     }
 
     /// Returns the peer's public info if established.
-    pub fn pub_info(&self) -> Option<(&Uid, &InAddr, &PublicKey)> {
+    pub fn pub_info(&self) -> Option<(&N, &InAddr, &PublicKey)> {
         match self.state {
             State::Handshaking => None,
             State::EstablishedObserver {
-                ref uid,
+                ref nid,
                 ref in_addr,
                 ref pk,
-            } => Some((uid, in_addr, pk)),
+            } => Some((nid, in_addr, pk)),
             State::PendingJoinInfo {
-                ref uid,
+                ref nid,
                 ref in_addr,
                 ref pk,
-            } => Some((uid, in_addr, pk)),
+            } => Some((nid, in_addr, pk)),
             State::EstablishedValidator {
-                ref uid,
+                ref nid,
                 ref in_addr,
                 ref pk,
-            } => Some((uid, in_addr, pk)),
+            } => Some((nid, in_addr, pk)),
         }
     }
 
@@ -396,7 +398,7 @@ impl<T: Contribution> Peer<T> {
     }
 
     /// Returns the peer's wire transmitter.
-    pub fn tx(&self) -> &WireTx<T> {
+    pub fn tx(&self) -> &WireTx<C, N> {
         &self.tx
     }
 }
@@ -406,15 +408,15 @@ impl<T: Contribution> Peer<T> {
 // TODO: Keep a separate `HashSet` of validator `OutAddrs` to avoid having to
 // iterate through entire list.
 #[derive(Debug)]
-pub struct Peers<T: Contribution> {
-    peers: HashMap<OutAddr, Peer<T>>,
-    out_addrs: HashMap<Uid, OutAddr>,
+pub struct Peers<C: Contribution, N: NodeId> {
+    peers: HashMap<OutAddr, Peer<C, N>>,
+    out_addrs: HashMap<N, OutAddr>,
     local_addr: InAddr,
 }
 
-impl<T: Contribution> Peers<T> {
+impl<C: Contribution, N: NodeId> Peers<C, N> {
     /// Returns a new empty list of peers.
-    pub(crate) fn new(local_addr: InAddr) -> Peers<T> {
+    pub(crate) fn new(local_addr: InAddr) -> Peers<C, N> {
         Peers {
             peers: HashMap::with_capacity(64),
             out_addrs: HashMap::with_capacity(64),
@@ -426,12 +428,12 @@ impl<T: Contribution> Peers<T> {
     pub(crate) fn add(
         &mut self,
         out_addr: OutAddr,
-        tx: WireTx<T>,
-        pub_info: Option<(Uid, InAddr, PublicKey)>,
+        tx: WireTx<C, N>,
+        pub_info: Option<(N, InAddr, PublicKey)>,
     ) {
         let peer = Peer::new(out_addr, tx, pub_info);
-        if let State::EstablishedValidator { uid, .. } = peer.state {
-            self.out_addrs.insert(uid, peer.out_addr);
+        if let State::EstablishedValidator { ref nid, .. } = peer.state {
+            self.out_addrs.insert(nid.clone(), peer.out_addr);
         }
         self.peers.insert(peer.out_addr, peer);
     }
@@ -448,14 +450,14 @@ impl<T: Contribution> Peers<T> {
     pub(crate) fn set_pending<O: Borrow<OutAddr>>(
         &mut self,
         out_addr: O,
-        pub_info: (Uid, InAddr, PublicKey),
+        pub_info: (N, InAddr, PublicKey),
     ) -> bool {
         let peer = self.peers.get_mut(out_addr.borrow()).expect(&format!(
             "Peers::set_pending: \
              No peer found with outgoing address: {}",
             out_addr.borrow()
         ));
-        match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
+        match self.out_addrs.insert(pub_info.0.clone(), *out_addr.borrow()) {
             Some(_out_addr_pub) => {
                 let pi_pub = peer
                     .pub_info()
@@ -503,14 +505,14 @@ impl<T: Contribution> Peers<T> {
     pub(crate) fn establish_validator<O: Borrow<OutAddr>>(
         &mut self,
         out_addr: O,
-        pub_info: (Uid, InAddr, PublicKey),
+        pub_info: (N, InAddr, PublicKey),
     ) -> bool {
         let peer = self.peers.get_mut(out_addr.borrow()).expect(&format!(
             "Peers::establish_validator: \
              No peer found with outgoing address: {}",
             out_addr.borrow()
         ));
-        match self.out_addrs.insert(pub_info.0, *out_addr.borrow()) {
+        match self.out_addrs.insert(pub_info.0.clone(), *out_addr.borrow()) {
             Some(_out_addr_pub) => {
                 let pi_pub = peer
                     .pub_info()
@@ -526,7 +528,7 @@ impl<T: Contribution> Peers<T> {
         false
     }
 
-    pub(crate) fn wire_to_all(&self, msg: WireMessage<T>) {
+    pub(crate) fn wire_to_all(&self, msg: WireMessage<C, N>) {
         for (_p_addr, peer) in self
             .peers
             .iter()
@@ -536,7 +538,7 @@ impl<T: Contribution> Peers<T> {
         }
     }
 
-    pub(crate) fn wire_to_validators(&self, msg: WireMessage<T>) {
+    pub(crate) fn wire_to_validators(&self, msg: WireMessage<C, N>) {
         // for peer in peers.validators()
         //         .filter(|p| p.out_addr() != &OutAddr(self.hdb.addr().0)) {
         //     peer.tx().unbounded_send(msg.clone()).unwrap();
@@ -546,27 +548,27 @@ impl<T: Contribution> Peers<T> {
         self.wire_to_all(msg)
     }
 
-    /// Sends a `WireMessage` to the target specified by `tar_uid`.
+    /// Sends a `WireMessage` to the target specified by `tar_nid`.
     ///
     /// If the target is not an established node, the message will be returned
     /// along with an incremented retry count.
     pub(crate) fn wire_to(
         &self,
-        tar_uid: Uid,
-        msg: WireMessage<T>,
+        tar_nid: N,
+        msg: WireMessage<C, N>,
         retry_count: usize,
-    ) -> Option<(Uid, WireMessage<T>, usize)> {
-        match self.get_by_uid(&tar_uid) {
+    ) -> Option<(N, WireMessage<C, N>, usize)> {
+        match self.get_by_nid(&tar_nid) {
             Some(p) => {
                 p.tx().unbounded_send(msg).unwrap();
                 None
             }
             None => {
                 info!(
-                    "Node '{}' is not yet established. Queueing message for now (retry_count: {}).",
-                    tar_uid, retry_count
+                    "Node '{:?}' is not yet established. Queueing message for now (retry_count: {}).",
+                    tar_nid, retry_count
                 );
-                Some((tar_uid, msg, retry_count + 1))
+                Some((tar_nid, msg, retry_count + 1))
             }
         }
     }
@@ -575,34 +577,34 @@ impl<T: Contribution> Peers<T> {
     pub(crate) fn remove<O: Borrow<OutAddr>>(&mut self, out_addr: O) {
         let peer = self.peers.remove(out_addr.borrow());
         if let Some(p) = peer {
-            if let Some(uid) = p.uid() {
-                self.out_addrs.remove(&uid);
+            if let Some(nid) = p.node_id() {
+                self.out_addrs.remove(&nid);
             }
         }
     }
 
-    pub(crate) fn get<O: Borrow<OutAddr>>(&self, out_addr: O) -> Option<&Peer<T>> {
+    pub(crate) fn get<O: Borrow<OutAddr>>(&self, out_addr: O) -> Option<&Peer<C, N>> {
         self.peers.get(out_addr.borrow())
     }
 
-    pub(crate) fn get_by_uid<U: Borrow<Uid>>(&self, uid: U) -> Option<&Peer<T>> {
+    pub(crate) fn get_by_nid<U: Borrow<N>>(&self, nid: U) -> Option<&Peer<C, N>> {
         self.out_addrs
-            .get(uid.borrow())
+            .get(nid.borrow())
             .and_then(|addr| self.get(addr))
     }
 
     /// Returns an Iterator over the list of peers.
-    pub(crate) fn iter(&self) -> HashMapIter<OutAddr, Peer<T>> {
+    pub(crate) fn iter(&self) -> HashMapIter<OutAddr, Peer<C, N>> {
         self.peers.iter()
     }
 
     /// Returns an Iterator over the list of peers.
-    pub fn peers(&self) -> HashMapValues<OutAddr, Peer<T>> {
+    pub fn peers(&self) -> HashMapValues<OutAddr, Peer<C, N>> {
         self.peers.values()
     }
 
     /// Returns an iterator over the list of validators.
-    pub fn validators(&self) -> impl Iterator<Item = &Peer<T>> {
+    pub fn validators(&self) -> impl Iterator<Item = &Peer<C, N>> {
         self.peers.values().filter(|p| p.is_validator())
     }
 

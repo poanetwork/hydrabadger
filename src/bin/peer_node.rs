@@ -10,7 +10,7 @@ extern crate serde_derive;
 
 use chrono::Local;
 use clap::{App, Arg, ArgMatches};
-use hydrabadger::{Blockchain, Config, Hydrabadger, MiningError};
+use hydrabadger::{Blockchain, Config, Hydrabadger, MiningError, Uid};
 use rand::Rng;
 use std::collections::HashSet;
 use std::env;
@@ -161,7 +161,7 @@ fn main() {
         cfg.output_extra_delay_ms = oed.parse().expect("Invalid output extra delay.");
     }
 
-    let hb = Hydrabadger::new(bind_address, cfg);
+    let hb = Hydrabadger::new(bind_address, cfg, Uid::new());
 
     let gen_txn = |txn_gen_count, txn_gen_bytes| {
         (0..txn_gen_count)

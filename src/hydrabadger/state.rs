@@ -7,7 +7,7 @@
 
 use super::{key_gen, Config, Error, InputOrMessage};
 use crate::peer::Peers;
-use crate::{ActiveNetworkInfo, Contribution, NetworkNodeInfo, NetworkState, Step, Uid};
+use crate::{ActiveNetworkInfo, Contribution, NetworkNodeInfo, NetworkState, Step, NodeId};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
@@ -65,26 +65,26 @@ impl From<usize> for StateDsct {
 
 /// The current hydrabadger state.
 //
-pub enum State<T: Contribution> {
+pub enum State<C: Contribution, N: NodeId> {
     Disconnected {},
     DeterminingNetworkState {
-        ack_queue: Option<SegQueue<(Uid, Ack)>>,
-        iom_queue: Option<SegQueue<InputOrMessage<T>>>,
-        network_state: Option<NetworkState>,
+        ack_queue: Option<SegQueue<(N, Ack)>>,
+        iom_queue: Option<SegQueue<InputOrMessage<C, N>>>,
+        network_state: Option<NetworkState<N>>,
     },
     KeyGen {
-        key_gen: key_gen::Machine,
-        iom_queue: Option<SegQueue<InputOrMessage<T>>>,
+        key_gen: key_gen::Machine<N>,
+        iom_queue: Option<SegQueue<InputOrMessage<C, N>>>,
     },
     Observer {
-        dhb: Option<DynamicHoneyBadger<T, Uid>>,
+        dhb: Option<DynamicHoneyBadger<C, N>>,
     },
     Validator {
-        dhb: Option<DynamicHoneyBadger<T, Uid>>,
+        dhb: Option<DynamicHoneyBadger<C, N>>,
     },
 }
 
-impl<T: Contribution> State<T> {
+impl<C: Contribution, N: NodeId> State<C, N> {
     /// Returns the state discriminant.
     pub(super) fn discriminant(&self) -> StateDsct {
         match self {
@@ -97,14 +97,14 @@ impl<T: Contribution> State<T> {
     }
 }
 
-pub struct StateMachine<T: Contribution> {
-    pub(crate) state: State<T>,
+pub struct StateMachine<C: Contribution, N: NodeId> {
+    pub(crate) state: State<C, N>,
     pub(crate) dsct: Arc<AtomicUsize>,
 }
 
-impl<T: Contribution> StateMachine<T> {
+impl<C: Contribution, N: NodeId> StateMachine<C, N> {
     /// Returns a new `State::Disconnected`.
-    pub(super) fn disconnected() -> StateMachine<T> {
+    pub(super) fn disconnected() -> StateMachine<C, N> {
         StateMachine {
             state: State::Disconnected {},
             dsct: Arc::new(AtomicUsize::new(0)),
@@ -172,7 +172,7 @@ impl<T: Contribution> StateMachine<T> {
 
     /// Sets state to `DeterminingNetworkState` if
     /// `AwaitingMorePeersForKeyGeneration`, otherwise panics.
-    pub(super) fn set_determining_network_state_active(&mut self, net_info: ActiveNetworkInfo) {
+    pub(super) fn set_determining_network_state_active(&mut self, net_info: ActiveNetworkInfo<N>) {
         self.state = match self.state {
             State::KeyGen {
                 ref mut iom_queue, ..
@@ -197,19 +197,19 @@ impl<T: Contribution> StateMachine<T> {
     #[must_use]
     pub(super) fn set_observer(
         &mut self,
-        local_uid: Uid,
+        local_nid: N,
         local_sk: SecretKey,
-        jp: JoinPlan<Uid>,
+        jp: JoinPlan<N>,
         _cfg: &Config,
-        step_queue: &SegQueue<Step<T>>,
-    ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
+        step_queue: &SegQueue<Step<C, N>>,
+    ) -> Result<SegQueue<InputOrMessage<C, N>>, Error> {
         let iom_queue_ret;
         self.state = match self.state {
             State::DeterminingNetworkState {
                 ref mut iom_queue, ..
             } => {
                 let (dhb, dhb_step) =
-                    DynamicHoneyBadger::new_joining(local_uid, local_sk, jp, StdRng::new()?)?;
+                    DynamicHoneyBadger::new_joining(local_nid, local_sk, jp, StdRng::new()?)?;
                 step_queue.push(dhb_step);
 
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -249,12 +249,12 @@ impl<T: Contribution> StateMachine<T> {
     #[must_use]
     pub(super) fn set_validator(
         &mut self,
-        local_uid: Uid,
+        local_nid: N,
         local_sk: SecretKey,
-        peers: &Peers<T>,
+        peers: &Peers<C, N>,
         cfg: &Config,
-        _step_queue: &SegQueue<Step<T>>,
-    ) -> Result<SegQueue<InputOrMessage<T>>, Error> {
+        _step_queue: &SegQueue<Step<C, N>>,
+    ) -> Result<SegQueue<InputOrMessage<C, N>>, Error> {
         let iom_queue_ret;
         self.state = match self.state {
             State::KeyGen {
@@ -273,13 +273,13 @@ impl<T: Contribution> StateMachine<T> {
 
                 assert!(peers.count_validators() >= cfg.keygen_peer_count);
 
-                let mut node_ids: BTreeMap<Uid, PublicKey> = peers
+                let mut node_ids: BTreeMap<N, PublicKey> = peers
                     .validators()
-                    .map(|p| (p.uid().cloned().unwrap(), p.public_key().cloned().unwrap()))
+                    .map(|p| (p.node_id().cloned().unwrap(), p.public_key().cloned().unwrap()))
                     .collect();
-                node_ids.insert(local_uid, local_sk.public_key());
+                node_ids.insert(local_nid.clone(), local_sk.public_key());
 
-                let netinfo = NetworkInfo::new(local_uid, sk_share, pk_set, local_sk, node_ids);
+                let netinfo = NetworkInfo::new(local_nid, sk_share, pk_set, local_sk, node_ids);
 
                 let dhb = DynamicHoneyBadger::builder()
                     .era(cfg.start_epoch)
@@ -331,7 +331,7 @@ impl<T: Contribution> StateMachine<T> {
 
     /// Sets state to `DeterminingNetworkState` if `Disconnected`, otherwise does
     /// nothing.
-    pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers<T>) {
+    pub(super) fn update_peer_connection_added(&mut self, _peers: &Peers<C, N>) {
         self.state = match self.state {
             State::Disconnected {} => {
                 info!("Setting state: `DeterminingNetworkState`.");
@@ -347,7 +347,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Sets state to `Disconnected` if peer count is zero, otherwise does nothing.
-    pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers<T>) {
+    pub(super) fn update_peer_connection_dropped(&mut self, peers: &Peers<C, N>) {
         self.state = match self.state {
             State::DeterminingNetworkState { .. } => {
                 if peers.count_total() == 0 {
@@ -385,14 +385,14 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns the network state, if possible.
-    pub(super) fn network_state(&self, peers: &Peers<T>) -> NetworkState {
+    pub(super) fn network_state(&self, peers: &Peers<C, N>) -> NetworkState<N> {
         use super::key_gen::State as KeyGenState;
 
         let peer_infos = peers
             .peers()
             .filter_map(|peer| {
                 peer.pub_info()
-                    .map(|(&uid, &in_addr, &pk)| NetworkNodeInfo { uid, in_addr, pk })
+                    .map(|(nid, &in_addr, &pk)| NetworkNodeInfo { nid: nid.clone(), in_addr, pk })
             })
             .collect::<Vec<_>>();
         match self.state {
@@ -416,7 +416,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub fn dhb(&self) -> Option<&DynamicHoneyBadger<T, Uid>> {
+    pub fn dhb(&self) -> Option<&DynamicHoneyBadger<C, N>> {
         match self.state {
             State::Observer { ref dhb, .. } => dhb.as_ref(),
             State::Validator { ref dhb, .. } => dhb.as_ref(),
@@ -425,7 +425,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the internal HB instance.
-    pub(super) fn dhb_mut(&mut self) -> Option<&mut DynamicHoneyBadger<T, Uid>> {
+    pub(super) fn dhb_mut(&mut self) -> Option<&mut DynamicHoneyBadger<C, N>> {
         match self.state {
             State::Observer { ref mut dhb, .. } => dhb.as_mut(),
             State::Validator { ref mut dhb, .. } => dhb.as_mut(),
@@ -434,7 +434,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the key generation instance.
-    pub(super) fn key_gen(&self) -> Option<&key_gen::Machine> {
+    pub(super) fn key_gen(&self) -> Option<&key_gen::Machine<N>> {
         match self.state {
             State::KeyGen { ref key_gen, .. } => Some(key_gen),
             _ => None,
@@ -442,7 +442,7 @@ impl<T: Contribution> StateMachine<T> {
     }
 
     /// Returns a reference to the key generation instance.
-    pub(super) fn key_gen_mut(&mut self) -> Option<&mut key_gen::Machine> {
+    pub(super) fn key_gen_mut(&mut self) -> Option<&mut key_gen::Machine<N>> {
         match self.state {
             State::KeyGen {
                 ref mut key_gen, ..
@@ -456,8 +456,8 @@ impl<T: Contribution> StateMachine<T> {
     /// Cannot be called while disconnected or connection-pending.
     pub(super) fn handle_iom(
         &mut self,
-        iom: InputOrMessage<T>,
-    ) -> Option<Result<Step<T>, DhbError>> {
+        iom: InputOrMessage<C, N>,
+    ) -> Option<Result<Step<C, N>, DhbError>> {
         match self.state {
             State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
                 trace!("State::handle_iom: Handling: {:?}", iom);
@@ -466,7 +466,7 @@ impl<T: Contribution> StateMachine<T> {
                     match iom {
                         InputOrMessage::Contribution(contrib) => dhb.propose(contrib),
                         InputOrMessage::Change(change) => dhb.vote_for(change),
-                        InputOrMessage::Message(src_uid, msg) => dhb.handle_message(&src_uid, msg),
+                        InputOrMessage::Message(src_nid, msg) => dhb.handle_message(&src_nid, msg),
                     }
                 });
 

@@ -68,7 +68,7 @@ use hbbft::{
         Change as DhbChange, DynamicHoneyBadger, JoinPlan, Message as DhbMessage,
     },
     sync_key_gen::{Ack, Part},
-    Contribution as HbbftContribution, DaStep as MessagingStep,
+    Contribution as HbbftContribution, DaStep as MessagingStep, NodeIdT,
 };
 use rand::{Rand, Rng};
 use serde::{de::DeserializeOwned, Serialize};
@@ -97,27 +97,27 @@ pub use hbbft::dynamic_honey_badger::Batch;
 
 /// Transmit half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type WireTx<T> = mpsc::UnboundedSender<WireMessage<T>>;
+type WireTx<C, N> = mpsc::UnboundedSender<WireMessage<C, N>>;
 
 /// Receive half of the wire message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type WireRx<T> = mpsc::UnboundedReceiver<WireMessage<T>>;
+type WireRx<C, N> = mpsc::UnboundedReceiver<WireMessage<C, N>>;
 
 /// Transmit half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type InternalTx<T> = mpsc::UnboundedSender<InternalMessage<T>>;
+type InternalTx<C, N> = mpsc::UnboundedSender<InternalMessage<C, N>>;
 
 /// Receive half of the internal message channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type InternalRx<T> = mpsc::UnboundedReceiver<InternalMessage<T>>;
+type InternalRx<C, N> = mpsc::UnboundedReceiver<InternalMessage<C, N>>;
 
 /// Transmit half of the batch output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-type BatchTx<T> = mpsc::UnboundedSender<Batch<T, Uid>>;
+type BatchTx<C, N> = mpsc::UnboundedSender<Batch<C, N>>;
 
 /// Receive half of the batch output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
-pub type BatchRx<T> = mpsc::UnboundedReceiver<Batch<T, Uid>>;
+pub type BatchRx<C, N> = mpsc::UnboundedReceiver<Batch<C, N>>;
 
 /// Transmit half of the epoch number output channel.
 // TODO: Use a bounded tx/rx (find a sensible upper bound):
@@ -136,6 +136,10 @@ impl<C> Contribution for C where
     C: HbbftContribution + Clone + Debug + Serialize + DeserializeOwned + 'static
 {
 }
+
+pub trait NodeId: NodeIdT + Serialize + DeserializeOwned + Rand + 'static {}
+
+impl<N> NodeId for N where N: NodeIdT + Serialize + DeserializeOwned + Rand + 'static {}
 
 /// A unique identifier.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -166,9 +170,9 @@ impl fmt::Debug for Uid {
     }
 }
 
-type Message = DhbMessage<Uid>;
-type Step<T> = MessagingStep<DynamicHoneyBadger<T, Uid>>;
-type Change = DhbChange<Uid>;
+type Message<N> = DhbMessage<N>;
+type Step<C, N> = MessagingStep<DynamicHoneyBadger<C, N>>;
+type Change<N> = DhbChange<N>;
 
 /// A peer's incoming (listening) address.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -206,22 +210,22 @@ impl fmt::Display for OutAddr {
 
 /// Nodes of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NetworkNodeInfo {
-    pub(crate) uid: Uid,
+pub struct NetworkNodeInfo<N> {
+    pub(crate) nid: N,
     pub(crate) in_addr: InAddr,
     pub(crate) pk: PublicKey,
 }
 
-type ActiveNetworkInfo = (Vec<NetworkNodeInfo>, PublicKeySet, BTreeMap<Uid, PublicKey>);
+type ActiveNetworkInfo<N> = (Vec<NetworkNodeInfo<N>>, PublicKeySet, BTreeMap<N, PublicKey>);
 
 /// The current state of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum NetworkState {
+pub enum NetworkState<N: Ord + Rand> {
     None,
-    Unknown(Vec<NetworkNodeInfo>),
-    AwaitingMorePeersForKeyGeneration(Vec<NetworkNodeInfo>),
-    GeneratingKeys(Vec<NetworkNodeInfo>, BTreeMap<Uid, PublicKey>),
-    Active(ActiveNetworkInfo),
+    Unknown(Vec<NetworkNodeInfo<N>>),
+    AwaitingMorePeersForKeyGeneration(Vec<NetworkNodeInfo<N>>),
+    GeneratingKeys(Vec<NetworkNodeInfo<N>>, BTreeMap<N, PublicKey>),
+    Active(ActiveNetworkInfo<N>),
 }
 
 /// Messages sent over the network between nodes.
@@ -229,12 +233,12 @@ pub enum NetworkState {
 /// [`Message`](enum.WireMessageKind.html#variant.Message) variants are among
 /// those verified.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum WireMessageKind<T> {
-    HelloFromValidator(Uid, InAddr, PublicKey, NetworkState),
-    HelloRequestChangeAdd(Uid, InAddr, PublicKey),
-    WelcomeReceivedChangeAdd(Uid, PublicKey, NetworkState),
+pub enum WireMessageKind<C, N: Ord + Rand> {
+    HelloFromValidator(N, InAddr, PublicKey, NetworkState<N>),
+    HelloRequestChangeAdd(N, InAddr, PublicKey),
+    WelcomeReceivedChangeAdd(N, PublicKey, NetworkState<N>),
     RequestNetworkState,
-    NetworkState(NetworkState),
+    NetworkState(NetworkState<N>),
     Goodbye,
     #[serde(with = "serde_bytes")]
     // TODO(c0gent): Remove.
@@ -243,89 +247,89 @@ pub enum WireMessageKind<T> {
     ///
     /// All received messages are verified against the senders public key
     /// using an attached signature.
-    Message(Uid, Message),
+    Message(N, Message<N>),
     // TODO(c0gent): Remove.
-    Transaction(Uid, T),
+    Transaction(N, C),
     /// Messages used during synchronous key generation.
     KeyGen(key_gen::InstanceId, key_gen::Message),
-    JoinPlan(JoinPlan<Uid>),
+    JoinPlan(JoinPlan<N>),
 }
 
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WireMessage<T> {
-    kind: WireMessageKind<T>,
+pub struct WireMessage<C, N: Ord + Rand> {
+    kind: WireMessageKind<C, N>,
 }
 
-impl<T: Contribution> WireMessage<T> {
+impl<C: Contribution, N: NodeId> WireMessage<C, N> {
     pub fn hello_from_validator(
-        src_uid: Uid,
+        src_uid: N,
         in_addr: InAddr,
         pk: PublicKey,
-        net_state: NetworkState,
-    ) -> WireMessage<T> {
+        net_state: NetworkState<N>,
+    ) -> WireMessage<C, N> {
         WireMessageKind::HelloFromValidator(src_uid, in_addr, pk, net_state).into()
     }
 
     /// Returns a `HelloRequestChangeAdd` variant.
     pub fn hello_request_change_add(
-        src_uid: Uid,
+        src_uid: N,
         in_addr: InAddr,
         pk: PublicKey,
-    ) -> WireMessage<T> {
+    ) -> WireMessage<C, N> {
         WireMessageKind::HelloRequestChangeAdd(src_uid, in_addr, pk).into()
     }
 
     /// Returns a `WelcomeReceivedChangeAdd` variant.
     pub fn welcome_received_change_add(
-        src_uid: Uid,
+        src_uid: N,
         pk: PublicKey,
-        net_state: NetworkState,
-    ) -> WireMessage<T> {
+        net_state: NetworkState<N>,
+    ) -> WireMessage<C, N> {
         WireMessageKind::WelcomeReceivedChangeAdd(src_uid, pk, net_state).into()
     }
 
     /// Returns an `Input` variant.
-    pub fn transaction(src_uid: Uid, txn: T) -> WireMessage<T> {
+    pub fn transaction(src_uid: N, txn: C) -> WireMessage<C, N> {
         WireMessageKind::Transaction(src_uid, txn).into()
     }
 
     /// Returns a `Message` variant.
-    pub fn message(src_uid: Uid, msg: Message) -> WireMessage<T> {
+    pub fn message(src_uid: N, msg: Message<N>) -> WireMessage<C, N> {
         WireMessageKind::Message(src_uid, msg).into()
     }
 
-    pub fn key_gen(instance_id: key_gen::InstanceId, msg: key_gen::Message) -> WireMessage<T> {
+    pub fn key_gen(instance_id: key_gen::InstanceId, msg: key_gen::Message) -> WireMessage<C, N> {
         WireMessageKind::KeyGen(instance_id, msg).into()
     }
 
-    pub fn key_gen_part(instance_id: key_gen::InstanceId, part: Part) -> WireMessage<T> {
+    pub fn key_gen_part(instance_id: key_gen::InstanceId, part: Part) -> WireMessage<C, N> {
         // WireMessageKind::KeyGenPart(part).into()
         WireMessage::key_gen(instance_id, key_gen::Message::part(part))
     }
 
-    pub fn key_gen_ack(instance_id: key_gen::InstanceId, ack: Ack) -> WireMessage<T> {
+    pub fn key_gen_ack(instance_id: key_gen::InstanceId, ack: Ack) -> WireMessage<C, N> {
         // WireMessageKind::KeyGenAck(outcome).into()
         WireMessage::key_gen(instance_id, key_gen::Message::ack(ack))
     }
 
-    pub fn join_plan(jp: JoinPlan<Uid>) -> WireMessage<T> {
+    pub fn join_plan(jp: JoinPlan<N>) -> WireMessage<C, N> {
         WireMessageKind::JoinPlan(jp).into()
     }
 
     /// Returns the wire message kind.
-    pub fn kind(&self) -> &WireMessageKind<T> {
+    pub fn kind(&self) -> &WireMessageKind<C, N> {
         &self.kind
     }
 
     /// Consumes this `WireMessage` into its kind.
-    pub fn into_kind(self) -> WireMessageKind<T> {
+    pub fn into_kind(self) -> WireMessageKind<C, N> {
         self.kind
     }
 }
 
-impl<T: Contribution> From<WireMessageKind<T>> for WireMessage<T> {
-    fn from(kind: WireMessageKind<T>) -> WireMessage<T> {
+impl<C: Contribution, N: NodeId> From<WireMessageKind<C, N>> for WireMessage<C, N> {
+    fn from(kind: WireMessageKind<C, N>) -> WireMessage<C, N> {
         WireMessage { kind }
     }
 }
@@ -338,20 +342,22 @@ pub struct SignedWireMessage {
 }
 
 /// A stream/sink of `WireMessage`s connected to a socket.
-pub struct WireMessages<T: Contribution> {
+pub struct WireMessages<C: Contribution, N: NodeId> {
     framed: Framed<TcpStream, LengthDelimitedCodec>,
     local_sk: SecretKey,
     peer_pk: Option<PublicKey>,
-    _t: PhantomData<T>,
+    _c: PhantomData<C>,
+    _n: PhantomData<N>,
 }
 
-impl<T: Contribution> WireMessages<T> {
-    pub fn new(socket: TcpStream, local_sk: SecretKey) -> WireMessages<T> {
+impl<C: Contribution, N: NodeId + DeserializeOwned> WireMessages<C, N> {
+    pub fn new(socket: TcpStream, local_sk: SecretKey) -> WireMessages<C, N> {
         WireMessages {
             framed: Framed::new(socket, LengthDelimitedCodec::new()),
             local_sk,
             peer_pk: None,
-            _t: PhantomData,
+            _c: PhantomData,
+            _n: PhantomData,
         }
     }
 
@@ -364,15 +370,15 @@ impl<T: Contribution> WireMessages<T> {
         self.framed.get_ref()
     }
 
-    pub fn send_msg(&mut self, msg: WireMessage<T>) -> Result<(), Error> {
+    pub fn send_msg(&mut self, msg: WireMessage<C, N>) -> Result<(), Error> {
         self.start_send(msg)?;
         let _ = self.poll_complete()?;
         Ok(())
     }
 }
 
-impl<T: Contribution> Stream for WireMessages<T> {
-    type Item = WireMessage<T>;
+impl<C: Contribution, N: NodeId + DeserializeOwned> Stream for WireMessages<C, N> {
+    type Item = WireMessage<C, N>;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -380,7 +386,7 @@ impl<T: Contribution> Stream for WireMessages<T> {
             Some(frame) => {
                 let s_msg: SignedWireMessage =
                     bincode::deserialize(&frame.freeze()).map_err(Error::Serde)?;
-                let msg: WireMessage<T> =
+                let msg: WireMessage<C, N> =
                     bincode::deserialize(&s_msg.message).map_err(Error::Serde)?;
 
                 // Verify signature for certain variants.
@@ -403,8 +409,8 @@ impl<T: Contribution> Stream for WireMessages<T> {
     }
 }
 
-impl<T: Contribution> Sink for WireMessages<T> {
-    type SinkItem = WireMessage<T>;
+impl<C: Contribution, N: NodeId + Serialize> Sink for WireMessages<C, N> {
+    type SinkItem = WireMessage<C, N>;
     type SinkError = Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -438,11 +444,11 @@ impl<T: Contribution> Sink for WireMessages<T> {
 
 /// A message between internal threads/tasks.
 #[derive(Clone, Debug)]
-pub enum InternalMessageKind<T: Contribution> {
-    Wire(WireMessage<T>),
-    HbMessage(Message),
-    HbContribution(T),
-    HbChange(Change),
+pub enum InternalMessageKind<C: Contribution, N: NodeId> {
+    Wire(WireMessage<C, N>),
+    HbMessage(Message<N>),
+    HbContribution(C),
+    HbChange(Change<N>),
     PeerDisconnect,
     NewIncomingConnection(InAddr, PublicKey, bool),
     NewOutgoingConnection,
@@ -451,18 +457,18 @@ pub enum InternalMessageKind<T: Contribution> {
 
 /// A message between internal threads/tasks.
 #[derive(Clone, Debug)]
-pub struct InternalMessage<T: Contribution> {
-    src_uid: Option<Uid>,
+pub struct InternalMessage<C: Contribution, N: NodeId> {
+    src_uid: Option<N>,
     src_addr: OutAddr,
-    kind: InternalMessageKind<T>,
+    kind: InternalMessageKind<C, N>,
 }
 
-impl<T: Contribution> InternalMessage<T> {
+impl<C: Contribution, N: NodeId> InternalMessage<C, N> {
     pub fn new(
-        src_uid: Option<Uid>,
+        src_uid: Option<N>,
         src_addr: OutAddr,
-        kind: InternalMessageKind<T>,
-    ) -> InternalMessage<T> {
+        kind: InternalMessageKind<C, N>,
+    ) -> InternalMessage<C, N> {
         InternalMessage {
             src_uid,
             src_addr,
@@ -471,23 +477,23 @@ impl<T: Contribution> InternalMessage<T> {
     }
 
     /// Returns a new `InternalMessage` without a uid.
-    pub fn new_without_uid(src_addr: OutAddr, kind: InternalMessageKind<T>) -> InternalMessage<T> {
+    pub fn new_without_uid(src_addr: OutAddr, kind: InternalMessageKind<C, N>) -> InternalMessage<C, N> {
         InternalMessage::new(None, src_addr, kind)
     }
 
     pub fn wire(
-        src_uid: Option<Uid>,
+        src_uid: Option<N>,
         src_addr: OutAddr,
-        wire_message: WireMessage<T>,
-    ) -> InternalMessage<T> {
+        wire_message: WireMessage<C, N>,
+    ) -> InternalMessage<C, N> {
         InternalMessage::new(src_uid, src_addr, InternalMessageKind::Wire(wire_message))
     }
 
-    pub fn hb_message(src_uid: Uid, src_addr: OutAddr, msg: Message) -> InternalMessage<T> {
+    pub fn hb_message(src_uid: N, src_addr: OutAddr, msg: Message<N>) -> InternalMessage<C, N> {
         InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::HbMessage(msg))
     }
 
-    pub fn hb_contribution(src_uid: Uid, src_addr: OutAddr, contrib: T) -> InternalMessage<T> {
+    pub fn hb_contribution(src_uid: N, src_addr: OutAddr, contrib: C) -> InternalMessage<C, N> {
         InternalMessage::new(
             Some(src_uid),
             src_addr,
@@ -495,7 +501,7 @@ impl<T: Contribution> InternalMessage<T> {
         )
     }
 
-    pub fn hb_vote(src_uid: Uid, src_addr: OutAddr, change: Change) -> InternalMessage<T> {
+    pub fn hb_vote(src_uid: N, src_addr: OutAddr, change: Change<N>) -> InternalMessage<C, N> {
         InternalMessage::new(
             Some(src_uid),
             src_addr,
@@ -503,17 +509,17 @@ impl<T: Contribution> InternalMessage<T> {
         )
     }
 
-    pub fn peer_disconnect(src_uid: Uid, src_addr: OutAddr) -> InternalMessage<T> {
+    pub fn peer_disconnect(src_uid: N, src_addr: OutAddr) -> InternalMessage<C, N> {
         InternalMessage::new(Some(src_uid), src_addr, InternalMessageKind::PeerDisconnect)
     }
 
     pub fn new_incoming_connection(
-        src_uid: Uid,
+        src_uid: N,
         src_addr: OutAddr,
         src_in_addr: InAddr,
         src_pk: PublicKey,
         request_change_add: bool,
-    ) -> InternalMessage<T> {
+    ) -> InternalMessage<C, N> {
         InternalMessage::new(
             Some(src_uid),
             src_addr,
@@ -522,10 +528,10 @@ impl<T: Contribution> InternalMessage<T> {
     }
 
     pub fn new_key_gen_instance(
-        src_uid: Uid,
+        src_uid: N,
         src_addr: OutAddr,
         tx: mpsc::UnboundedSender<key_gen::Message>,
-    ) -> InternalMessage<T> {
+    ) -> InternalMessage<C, N> {
         InternalMessage::new(
             Some(src_uid),
             src_addr,
@@ -533,12 +539,12 @@ impl<T: Contribution> InternalMessage<T> {
         )
     }
 
-    pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage<T> {
+    pub fn new_outgoing_connection(src_addr: OutAddr) -> InternalMessage<C, N> {
         InternalMessage::new_without_uid(src_addr, InternalMessageKind::NewOutgoingConnection)
     }
 
     /// Returns the source unique identifier this message was received in.
-    pub fn src_uid(&self) -> Option<&Uid> {
+    pub fn src_uid(&self) -> Option<&N> {
         self.src_uid.as_ref()
     }
 
@@ -548,12 +554,12 @@ impl<T: Contribution> InternalMessage<T> {
     }
 
     /// Returns the internal message kind.
-    pub fn kind(&self) -> &InternalMessageKind<T> {
+    pub fn kind(&self) -> &InternalMessageKind<C, N> {
         &self.kind
     }
 
     /// Consumes this `InternalMessage` into its parts.
-    pub fn into_parts(self) -> (Option<Uid>, OutAddr, InternalMessageKind<T>) {
+    pub fn into_parts(self) -> (Option<N>, OutAddr, InternalMessageKind<C, N>) {
         (self.src_uid, self.src_addr, self.kind)
     }
 }
