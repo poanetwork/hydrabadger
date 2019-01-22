@@ -59,6 +59,7 @@ version = "*"
 git = "https://github.com/poanetwork/hbbft"
 # branch = "master"
 rev = "ceb416a6"
+# rev = "d4a7b19adb7021efcefdf735f6dd2c45cce0a1d2"
 # path = "../hbbft"
 
 [profile.release]

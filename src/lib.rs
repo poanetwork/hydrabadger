@@ -170,9 +170,9 @@ impl fmt::Debug for Uid {
     }
 }
 
-type Message<N> = DhbMessage<N>;
-type Step<C, N> = MessagingStep<DynamicHoneyBadger<C, N>>;
-type Change<N> = DhbChange<N>;
+pub type Message<N> = DhbMessage<N>;
+pub type Step<C, N> = MessagingStep<DynamicHoneyBadger<C, N>>;
+pub type Change<N> = DhbChange<N>;
 
 /// A peer's incoming (listening) address.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
