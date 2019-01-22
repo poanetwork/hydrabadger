@@ -14,7 +14,7 @@ use futures::{
 };
 use hbbft::crypto::{PublicKey, SecretKey};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use rand::{self, Rand};
+use rand::{self, Rng};
 use std::{
     collections::HashSet,
     net::SocketAddr,
@@ -81,7 +81,6 @@ impl Default for Config {
 /// Shared all over the place.
 struct Inner<C: Contribution, N: NodeId> {
     /// Node nid:
-    // nid: Uid,
     nid: N,
     /// Incoming connection socket.
     addr: InAddr,
@@ -123,8 +122,7 @@ pub struct Hydrabadger<C: Contribution, N: NodeId> {
 impl<C: Contribution, N: NodeId + DeserializeOwned + 'static> Hydrabadger<C, N> {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config, nid: N) -> Self {
-        // let nid = Uid::new();
-        let secret_key = SecretKey::rand(&mut rand::OsRng::new().expect("Unable to create rng"));
+        let secret_key: SecretKey = rand::rngs::OsRng::new().expect("Unable to create rng").gen();
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
         let (batch_tx, batch_rx) = mpsc::unbounded();

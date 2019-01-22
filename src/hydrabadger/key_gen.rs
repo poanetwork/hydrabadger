@@ -10,7 +10,7 @@ use hbbft::{
     crypto::{PublicKey, SecretKey},
     sync_key_gen::{Ack, AckOutcome, Part, PartOutcome, SyncKeyGen},
 };
-use rand;
+use rand::{self, FromEntropy};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -184,21 +184,21 @@ impl<N: NodeId> Machine<N> {
                 let pk = local_sk.public_key();
                 public_keys.insert(local_nid.clone(), pk);
 
-                let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
+                let mut rng = rand::rngs::StdRng::from_entropy();
 
                 let (mut sync_key_gen, opt_part) = SyncKeyGen::new(
-                    &mut rng,
                     local_nid.clone(),
                     local_sk,
                     public_keys.clone(),
                     threshold,
+                    &mut rng,
                 )
                 .map_err(Error::SyncKeyGenNew)?;
                 part = opt_part.expect("This node is not a validator (somehow)!");
 
                 trace!("KEY GENERATION: Handling our own `Part`...");
                 ack = match sync_key_gen
-                    .handle_part(&mut rng, &local_nid, part.clone())
+                    .handle_part(&local_nid, part.clone(), &mut rng)
                     .expect("Handling our own Part has failed")
                 {
                     PartOutcome::Valid(Some(ack)) => ack,
@@ -294,9 +294,9 @@ impl<N: NodeId> Machine<N> {
             } => {
                 // TODO: Move this match block into a function somewhere for re-use:
                 trace!("KEY GENERATION: Handling part from '{:?}'...", src_nid);
-                let mut rng = rand::OsRng::new().expect("Creating OS Rng has failed");
+                let mut rng = rand::rngs::OsRng::new().expect("Creating OS Rng has failed");
                 let skg = sync_key_gen.as_mut().unwrap();
-                let ack = match skg.handle_part(&mut rng, src_nid, part) {
+                let ack = match skg.handle_part(src_nid, part, &mut rng) {
                     Ok(PartOutcome::Valid(Some(ack))) => ack,
                     Ok(PartOutcome::Invalid(faults)) => panic!(
                         "Invalid part \

@@ -24,7 +24,6 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 extern crate crossbeam;
-// #[macro_use] extern crate crossbeam_channel;
 extern crate chrono;
 extern crate crypto;
 extern crate num_bigint;
@@ -68,9 +67,9 @@ use hbbft::{
         Change as DhbChange, DynamicHoneyBadger, JoinPlan, Message as DhbMessage,
     },
     sync_key_gen::{Ack, Part},
-    Contribution as HbbftContribution, DaStep as MessagingStep, NodeIdT,
+    Contribution as HbbftContribution, CpStep as MessagingStep, NodeIdT,
 };
-use rand::{Rand, Rng};
+use rand::{distributions::{Standard, Distribution}, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     collections::BTreeMap,
@@ -137,9 +136,9 @@ impl<C> Contribution for C where
 {
 }
 
-pub trait NodeId: NodeIdT + Serialize + DeserializeOwned + Rand + 'static {}
+pub trait NodeId: NodeIdT + Serialize + DeserializeOwned + 'static {}
 
-impl<N> NodeId for N where N: NodeIdT + Serialize + DeserializeOwned + Rand + 'static {}
+impl<N> NodeId for N where N: NodeIdT + Serialize + DeserializeOwned + 'static {}
 
 /// A unique identifier.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -152,8 +151,8 @@ impl Uid {
     }
 }
 
-impl Rand for Uid {
-    fn rand<R: Rng>(_rng: &mut R) -> Uid {
+impl Distribution<Uid> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, _rng: &mut R) -> Uid {
         Uid::new()
     }
 }
@@ -220,7 +219,7 @@ type ActiveNetworkInfo<N> = (Vec<NetworkNodeInfo<N>>, PublicKeySet, BTreeMap<N, 
 
 /// The current state of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum NetworkState<N: Ord + Rand> {
+pub enum NetworkState<N: Ord> {
     None,
     Unknown(Vec<NetworkNodeInfo<N>>),
     AwaitingMorePeersForKeyGeneration(Vec<NetworkNodeInfo<N>>),
@@ -233,7 +232,7 @@ pub enum NetworkState<N: Ord + Rand> {
 /// [`Message`](enum.WireMessageKind.html#variant.Message) variants are among
 /// those verified.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum WireMessageKind<C, N: Ord + Rand> {
+pub enum WireMessageKind<C, N: Ord> {
     HelloFromValidator(N, InAddr, PublicKey, NetworkState<N>),
     HelloRequestChangeAdd(N, InAddr, PublicKey),
     WelcomeReceivedChangeAdd(N, PublicKey, NetworkState<N>),
@@ -257,7 +256,7 @@ pub enum WireMessageKind<C, N: Ord + Rand> {
 
 /// Messages sent over the network between nodes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WireMessage<C, N: Ord + Rand> {
+pub struct WireMessage<C, N: Ord> {
     kind: WireMessageKind<C, N>,
 }
 
@@ -304,12 +303,10 @@ impl<C: Contribution, N: NodeId> WireMessage<C, N> {
     }
 
     pub fn key_gen_part(instance_id: key_gen::InstanceId, part: Part) -> WireMessage<C, N> {
-        // WireMessageKind::KeyGenPart(part).into()
         WireMessage::key_gen(instance_id, key_gen::Message::part(part))
     }
 
     pub fn key_gen_ack(instance_id: key_gen::InstanceId, ack: Ack) -> WireMessage<C, N> {
-        // WireMessageKind::KeyGenAck(outcome).into()
         WireMessage::key_gen(instance_id, key_gen::Message::ack(ack))
     }
 

@@ -3,7 +3,6 @@ mod hydrabadger;
 pub mod key_gen;
 mod state;
 
-use rand::Rand;
 use self::handler::Handler;
 use self::state::{State, StateMachine};
 use crate::{Change, Message};
@@ -19,7 +18,7 @@ pub const WIRE_MESSAGE_RETRY_MAX: usize = 10;
 
 /// A HoneyBadger input or message.
 #[derive(Clone, Debug)]
-pub enum InputOrMessage<T, N: Ord + Rand> {
+pub enum InputOrMessage<T, N: Ord> {
     Change(Change<N>),
     Contribution(T),
     Message(N, Message<N>),

@@ -22,7 +22,6 @@ no-simd = ["hbbft/no-simd"]
 
 [dependencies]
 log = "0.4"
-# env_logger = "*"
 env_logger = "0.5"
 clap = "2"
 failure = "0.1"
@@ -35,7 +34,7 @@ num-bigint = "*"
 colored = "*"
 itertools = "*"
 pairing = "*"
-rand = "0.4.2"
+rand = "0.6"
 serde = "1"
 serde_bytes = "~0.10.4"
 serde_derive = "1"
@@ -58,8 +57,7 @@ version = "*"
 # git = "https://github.com/c0gent/hbbft"
 git = "https://github.com/poanetwork/hbbft"
 # branch = "master"
-rev = "ceb416a6"
-# rev = "d4a7b19adb7021efcefdf735f6dd2c45cce0a1d2"
+rev = "d4a7b19"
 # path = "../hbbft"
 
 [profile.release]

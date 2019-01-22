@@ -15,7 +15,7 @@ use hbbft::{
     sync_key_gen::Ack,
     NetworkInfo,
 };
-use rand::StdRng;
+use rand::{rngs::StdRng, FromEntropy};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -209,7 +209,7 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
                 ref mut iom_queue, ..
             } => {
                 let (dhb, dhb_step) =
-                    DynamicHoneyBadger::new_joining(local_nid, local_sk, jp, StdRng::new()?)?;
+                    DynamicHoneyBadger::new_joining(local_nid, local_sk, jp, &mut StdRng::from_entropy())?;
                 step_queue.push(dhb_step);
 
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -461,12 +461,13 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
         match self.state {
             State::Observer { ref mut dhb, .. } | State::Validator { ref mut dhb, .. } => {
                 trace!("State::handle_iom: Handling: {:?}", iom);
+                let mut rng = StdRng::from_entropy();
                 let step_opt = Some({
                     let dhb = dhb.as_mut().unwrap();
                     match iom {
-                        InputOrMessage::Contribution(contrib) => dhb.propose(contrib),
+                        InputOrMessage::Contribution(contrib) => dhb.propose(contrib, &mut rng),
                         InputOrMessage::Change(change) => dhb.vote_for(change),
-                        InputOrMessage::Message(src_nid, msg) => dhb.handle_message(&src_nid, msg),
+                        InputOrMessage::Message(src_nid, msg) => dhb.handle_message(&src_nid, msg, &mut rng),
                     }
                 });
 

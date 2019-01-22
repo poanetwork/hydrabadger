@@ -11,7 +11,7 @@ extern crate serde_derive;
 use chrono::Local;
 use clap::{App, Arg, ArgMatches};
 use hydrabadger::{Blockchain, Config, Hydrabadger, MiningError, Uid};
-use rand::Rng;
+use rand::{Rng, distributions::Standard};
 use std::collections::HashSet;
 use std::env;
 use std::io::Write;
@@ -97,7 +97,7 @@ pub struct Transaction(pub Vec<u8>);
 
 impl Transaction {
     fn random(len: usize) -> Transaction {
-        Transaction(rand::thread_rng().gen_iter().take(len).collect())
+        Transaction(rand::thread_rng().sample_iter(&Standard).take(len).collect())
     }
 }
 
