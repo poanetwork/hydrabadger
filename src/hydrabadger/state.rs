@@ -234,7 +234,7 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
                 State::Observer { dhb: Some(dhb) }
             }
             ref s => panic!(
-                "State::set_observer: State must be `GeneratingKeys`. \
+                "State::set_observer: State must be `DeterminingNetworkState`. \
                  State: {}",
                 s.discriminant()
             ),
