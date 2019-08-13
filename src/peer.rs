@@ -4,14 +4,11 @@
 
 use crate::hydrabadger::{Error, Hydrabadger};
 use crate::{
-    Contribution, InAddr, InternalMessage, OutAddr, Uid, WireMessage, WireMessageKind,
-    WireMessages, WireRx, WireTx, NodeId,
+    Contribution, InAddr, InternalMessage, NodeId, OutAddr, Uid, WireMessage, WireMessageKind,
+    WireMessages, WireRx, WireTx,
 };
 use futures::sync::mpsc;
-use hbbft::{
-    crypto::PublicKey,
-    dynamic_honey_badger::Input as HbInput,
-};
+use hbbft::{crypto::PublicKey, dynamic_honey_badger::Input as HbInput};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -135,7 +132,11 @@ impl<C: Contribution, N: NodeId> Future for PeerHandler<C, N> {
                         self.hdb.send_internal(InternalMessage::wire(
                             Some(src_nid.clone()),
                             self.out_addr,
-                            WireMessage::welcome_received_change_add(src_nid.clone(), pk, net_state),
+                            WireMessage::welcome_received_change_add(
+                                src_nid.clone(),
+                                pk,
+                                net_state,
+                            ),
                         ));
                     }
                     WireMessageKind::HelloFromValidator(src_nid, in_addr, pk, net_state) => {
@@ -144,7 +145,12 @@ impl<C: Contribution, N: NodeId> Future for PeerHandler<C, N> {
                         self.hdb.send_internal(InternalMessage::wire(
                             Some(src_nid.clone()),
                             self.out_addr,
-                            WireMessage::hello_from_validator(src_nid.clone(), in_addr, pk, net_state),
+                            WireMessage::hello_from_validator(
+                                src_nid.clone(),
+                                in_addr,
+                                pk,
+                                net_state,
+                            ),
                         ));
                     }
                     WireMessageKind::Message(src_nid, msg) => {
@@ -274,9 +280,15 @@ impl<C: Contribution, N: NodeId> Peer<C, N> {
     /// Sets a peer state to `State::EstablishedObserver` and stores public info.
     fn establish_observer(&mut self) {
         self.state = match self.state {
-            State::PendingJoinInfo { ref nid, in_addr, pk } => {
-                State::EstablishedObserver { nid: nid.clone(), in_addr, pk }
-            }
+            State::PendingJoinInfo {
+                ref nid,
+                in_addr,
+                pk,
+            } => State::EstablishedObserver {
+                nid: nid.clone(),
+                in_addr,
+                pk,
+            },
             _ => panic!(
                 "Peer::establish_observer: Can only establish observer when \
                  peer state is`PendingJoinInfo`."
@@ -300,14 +312,22 @@ impl<C: Contribution, N: NodeId> Peer<C, N> {
                     );
                 }
             },
-            State::EstablishedObserver { ref nid, in_addr, pk } => {
+            State::EstablishedObserver {
+                ref nid,
+                in_addr,
+                pk,
+            } => {
                 if pub_info.is_some() {
                     panic!(
                         "Peer::establish_validator: `pub_info` must be `None` \
                          when upgrading an observer node."
                     );
                 }
-                State::EstablishedValidator { nid: nid.clone(), in_addr, pk }
+                State::EstablishedValidator {
+                    nid: nid.clone(),
+                    in_addr,
+                    pk,
+                }
             }
             _ => panic!(
                 "Peer::establish_validator: Can only establish validator when \
@@ -457,7 +477,10 @@ impl<C: Contribution, N: NodeId> Peers<C, N> {
              No peer found with outgoing address: {}",
             out_addr.borrow()
         ));
-        match self.out_addrs.insert(pub_info.0.clone(), *out_addr.borrow()) {
+        match self
+            .out_addrs
+            .insert(pub_info.0.clone(), *out_addr.borrow())
+        {
             Some(_out_addr_pub) => {
                 let pi_pub = peer
                     .pub_info()
@@ -512,7 +535,10 @@ impl<C: Contribution, N: NodeId> Peers<C, N> {
              No peer found with outgoing address: {}",
             out_addr.borrow()
         ));
-        match self.out_addrs.insert(pub_info.0.clone(), *out_addr.borrow()) {
+        match self
+            .out_addrs
+            .insert(pub_info.0.clone(), *out_addr.borrow())
+        {
             Some(_out_addr_pub) => {
                 let pi_pub = peer
                     .pub_info()

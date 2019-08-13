@@ -23,8 +23,8 @@ extern crate env_logger;
 extern crate log;
 #[macro_use]
 extern crate failure;
-extern crate crossbeam;
 extern crate chrono;
+extern crate crossbeam;
 extern crate crypto;
 extern crate num_bigint;
 extern crate num_traits;
@@ -69,7 +69,10 @@ use hbbft::{
     sync_key_gen::{Ack, Part},
     Contribution as HbbftContribution, CpStep as MessagingStep, NodeIdT,
 };
-use rand::{distributions::{Standard, Distribution}, Rng};
+use rand::{
+    distributions::{Distribution, Standard},
+    Rng,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     collections::BTreeMap,
@@ -146,8 +149,14 @@ pub struct Uid(pub(crate) Uuid);
 
 impl Uid {
     /// Returns a new, random `Uid`.
-    pub fn new() -> Uid {
-        Uid(Uuid::new_v4())
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for Uid {
+    fn default() -> Self {
+        Self(Uuid::new_v4())
     }
 }
 
@@ -215,7 +224,11 @@ pub struct NetworkNodeInfo<N> {
     pub(crate) pk: PublicKey,
 }
 
-type ActiveNetworkInfo<N> = (Vec<NetworkNodeInfo<N>>, PublicKeySet, BTreeMap<N, PublicKey>);
+type ActiveNetworkInfo<N> = (
+    Vec<NetworkNodeInfo<N>>,
+    PublicKeySet,
+    BTreeMap<N, PublicKey>,
+);
 
 /// The current state of the network.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -474,7 +487,10 @@ impl<C: Contribution, N: NodeId> InternalMessage<C, N> {
     }
 
     /// Returns a new `InternalMessage` without a uid.
-    pub fn new_without_uid(src_addr: OutAddr, kind: InternalMessageKind<C, N>) -> InternalMessage<C, N> {
+    pub fn new_without_uid(
+        src_addr: OutAddr,
+        kind: InternalMessageKind<C, N>,
+    ) -> InternalMessage<C, N> {
         InternalMessage::new(None, src_addr, kind)
     }
 

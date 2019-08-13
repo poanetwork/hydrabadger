@@ -9,7 +9,7 @@ use super::{Error, Hydrabadger, InputOrMessage, State, StateDsct, StateMachine};
 use crate::peer::Peers;
 use crate::{
     key_gen, BatchTx, Contribution, InAddr, InternalMessage, InternalMessageKind, InternalRx,
-    NetworkState, OutAddr, Step, Uid, WireMessage, WireMessageKind, NodeId,
+    NetworkState, NodeId, OutAddr, Step, Uid, WireMessage, WireMessageKind,
 };
 use crossbeam::queue::SegQueue;
 use hbbft::{
@@ -90,7 +90,11 @@ impl<C: Contribution, N: NodeId> Handler<C, N> {
         Ok(())
     }
 
-    fn handle_iom(&self, iom: InputOrMessage<C, N>, state: &mut StateMachine<C, N>) -> Result<(), Error> {
+    fn handle_iom(
+        &self,
+        iom: InputOrMessage<C, N>,
+        state: &mut StateMachine<C, N>,
+    ) -> Result<(), Error> {
         trace!("hydrabadger::Handler: About to handle_iom: {:?}", iom);
         if let Some(step_res) = state.handle_iom(iom) {
             let step = step_res.map_err(Error::HbStep)?;
@@ -518,7 +522,7 @@ impl<C: Contribution, N: NodeId> Handler<C, N> {
                 let peers = self.hdb.peers();
                 let new_id = Uid::new();
                 // tx.unbounded_send(key_gen::Message::instance_id().unwrap();
-                let instance_id = key_gen::InstanceId::User(new_id.clone());
+                let instance_id = key_gen::InstanceId::User(new_id);
                 let key_gen = key_gen::Machine::generate(
                     self.hdb.node_id(),
                     self.hdb.secret_key().clone(),
@@ -541,9 +545,10 @@ impl<C: Contribution, N: NodeId> Handler<C, N> {
                 ) => {
                     debug!("Received hello from {:?}", src_nid_new);
                     let mut peers = self.hdb.peers_mut();
-                    match peers
-                        .establish_validator(src_out_addr, (src_nid_new.clone(), src_in_addr, src_pk))
-                    {
+                    match peers.establish_validator(
+                        src_out_addr,
+                        (src_nid_new.clone(), src_in_addr, src_pk),
+                    ) {
                         true => debug_assert!(src_nid_new == src_nid.unwrap()),
                         false => debug_assert!(src_nid.is_none()),
                     }
@@ -738,7 +743,10 @@ impl<C: Contribution, N: NodeId> Future for Handler<C, N> {
                         );
                     }
                     Target::All => {
-                        peers.wire_to_all(WireMessage::message(self.hdb.node_id().clone(), hb_msg.message));
+                        peers.wire_to_all(WireMessage::message(
+                            self.hdb.node_id().clone(),
+                            hb_msg.message,
+                        ));
                     }
                 }
             }

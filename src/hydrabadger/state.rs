@@ -7,7 +7,7 @@
 
 use super::{key_gen, Config, Error, InputOrMessage};
 use crate::peer::Peers;
-use crate::{ActiveNetworkInfo, Contribution, NetworkNodeInfo, NetworkState, Step, NodeId};
+use crate::{ActiveNetworkInfo, Contribution, NetworkNodeInfo, NetworkState, NodeId, Step};
 use crossbeam::queue::SegQueue;
 use hbbft::{
     crypto::{PublicKey, SecretKey},
@@ -208,8 +208,12 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
             State::DeterminingNetworkState {
                 ref mut iom_queue, ..
             } => {
-                let (dhb, dhb_step) =
-                    DynamicHoneyBadger::new_joining(local_nid, local_sk, jp, &mut StdRng::from_entropy())?;
+                let (dhb, dhb_step) = DynamicHoneyBadger::new_joining(
+                    local_nid,
+                    local_sk,
+                    jp,
+                    &mut StdRng::from_entropy(),
+                )?;
                 step_queue.push(dhb_step);
 
                 iom_queue_ret = iom_queue.take().unwrap();
@@ -275,7 +279,12 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
 
                 let mut node_ids: BTreeMap<N, PublicKey> = peers
                     .validators()
-                    .map(|p| (p.node_id().cloned().unwrap(), p.public_key().cloned().unwrap()))
+                    .map(|p| {
+                        (
+                            p.node_id().cloned().unwrap(),
+                            p.public_key().cloned().unwrap(),
+                        )
+                    })
                     .collect();
                 node_ids.insert(local_nid.clone(), local_sk.public_key());
 
@@ -391,8 +400,11 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
         let peer_infos = peers
             .peers()
             .filter_map(|peer| {
-                peer.pub_info()
-                    .map(|(nid, &in_addr, &pk)| NetworkNodeInfo { nid: nid.clone(), in_addr, pk })
+                peer.pub_info().map(|(nid, &in_addr, &pk)| NetworkNodeInfo {
+                    nid: nid.clone(),
+                    in_addr,
+                    pk,
+                })
             })
             .collect::<Vec<_>>();
         match self.state {
@@ -467,7 +479,9 @@ impl<C: Contribution, N: NodeId> StateMachine<C, N> {
                     match iom {
                         InputOrMessage::Contribution(contrib) => dhb.propose(contrib, &mut rng),
                         InputOrMessage::Change(change) => dhb.vote_for(change),
-                        InputOrMessage::Message(src_nid, msg) => dhb.handle_message(&src_nid, msg, &mut rng),
+                        InputOrMessage::Message(src_nid, msg) => {
+                            dhb.handle_message(&src_nid, msg, &mut rng)
+                        }
                     }
                 });
 
