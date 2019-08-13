@@ -7,18 +7,18 @@ Tolerant consensus algorithm](https://github.com/poanetwork/hbbft).
 
 ### Running a test peer
 
-1. `git clone https://github.com/poanetwork/hydrabadger`
-2. `cd hydrabadger`
-3. `./run-node 0`
+1.  `git clone https://github.com/poanetwork/hydrabadger`
+2.  `cd hydrabadger`
+3.  `./run-node 0`
 
 #### Additional peers
 
-1. Open a new terminal window.
-2. `cd {...}/hydrabadger`
-3. `./run-node 1`
-4. (Repeat 1 and 2), `./run-node 2`, `./run-node 3`, `./run-node 4`
-    * Note: If your terminal has tabs, open multiple tabs and use
-      ctrl-pgup/pgdown to cycle between tabs quickly.
+1.  Open a new terminal window.
+2.  `cd {...}/hydrabadger`
+3.  `./run-node 1`
+4.  (Repeat 1 and 2), `./run-node 2`, `./run-node 3`, `./run-node 4`
+    -   Note: If your terminal has tabs, open multiple tabs and use
+        ctrl-pgup/pgdown to cycle between tabs quickly.
 
 Each peer will generate a number of random transactions at regular intervals,
 process them accordingly, and output complete batches. If your terminal is
@@ -43,13 +43,13 @@ very well yet.
 
 ### Unimplemented
 
-* **Many edge cases and exceptions:** disconnects, reconnects, etc.
-  * Connecting to a network which is in the process of key generation causes
-    the entire network to fail. For now, wait until the network starts
-    outputting batches before connecting additional peer nodes.
-* **Error handling** is atrocious, most errors are simply printed to the log.
-* **Usage as a library** is still a work in progress as the API settles.
-* **Much, much more...**
+-   **Many edge cases and exceptions:** disconnects, reconnects, etc.
+    -   Connecting to a network which is in the process of key generation causes
+        the entire network to fail. For now, wait until the network starts
+        outputting batches before connecting additional peer nodes.
+-   **Error handling** is atrocious, most errors are simply printed to the log.
+-   **Usage as a library** is still a work in progress as the API settles.
+-   **Much, much more...**
 
 ### License
 

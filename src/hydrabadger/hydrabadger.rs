@@ -1,12 +1,11 @@
 //! A hydrabadger consensus node.
 //!
 
-use serde::de::DeserializeOwned;
 use super::{Error, Handler, StateDsct, StateMachine};
 use crate::peer::{PeerHandler, Peers};
 use crate::{
     key_gen, BatchRx, Change, Contribution, EpochRx, EpochTx, InAddr, InternalMessage, InternalTx,
-    OutAddr, WireMessage, WireMessageKind, WireMessages, NodeId,
+    NodeId, OutAddr, WireMessage, WireMessageKind, WireMessages,
 };
 use futures::{
     future::{self, Either},
@@ -14,7 +13,7 @@ use futures::{
 };
 use hbbft::crypto::{PublicKey, SecretKey};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use rand::{self, Rng};
+use serde::de::DeserializeOwned;
 use std::{
     collections::HashSet,
     net::SocketAddr,
@@ -122,7 +121,7 @@ pub struct Hydrabadger<C: Contribution, N: NodeId> {
 impl<C: Contribution, N: NodeId + DeserializeOwned + 'static> Hydrabadger<C, N> {
     /// Returns a new Hydrabadger node.
     pub fn new(addr: SocketAddr, cfg: Config, nid: N) -> Self {
-        let secret_key: SecretKey = rand::rngs::OsRng::new().expect("Unable to create rng").gen();
+        let secret_key = SecretKey::random();
 
         let (peer_internal_tx, peer_internal_rx) = mpsc::unbounded();
         let (batch_tx, batch_rx) = mpsc::unbounded();
@@ -310,7 +309,8 @@ impl<C: Contribution, N: NodeId + DeserializeOwned + 'static> Hydrabadger<C, N> 
     /// Returns a future that handles incoming connections on `socket`.
     fn handle_incoming(self, socket: TcpStream) -> impl Future<Item = (), Error = ()> {
         info!("Incoming connection from '{}'", socket.peer_addr().unwrap());
-        let wire_msgs: WireMessages<C, N> = WireMessages::new(socket, self.inner.secret_key.clone());
+        let wire_msgs: WireMessages<C, N> =
+            WireMessages::new(socket, self.inner.secret_key.clone());
 
         wire_msgs
             .into_future()

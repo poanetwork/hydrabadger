@@ -3,7 +3,7 @@
 use super::Error;
 use crate::hydrabadger::hydrabadger::Hydrabadger;
 use crate::peer::Peers;
-use crate::{Contribution, NetworkState, Uid, WireMessage, NodeId};
+use crate::{Contribution, NetworkState, NodeId, Uid, WireMessage};
 use crossbeam::queue::SegQueue;
 use futures::sync::mpsc;
 use hbbft::{
@@ -64,7 +64,6 @@ pub(super) enum State<N> {
         sync_key_gen: Option<SyncKeyGen<N>>,
         public_key: Option<PublicKey>,
         public_keys: BTreeMap<N, PublicKey>,
-
         part_count: usize,
         ack_count: usize,
     },
@@ -75,7 +74,12 @@ pub(super) enum State<N> {
 }
 
 /// Forwards an `Ack` to a `SyncKeyGen` instance.
-fn handle_ack<N: NodeId>(nid: &N, ack: Ack, ack_count: &mut usize, sync_key_gen: &mut SyncKeyGen<N>) {
+fn handle_ack<N: NodeId>(
+    nid: &N,
+    ack: Ack,
+    ack_count: &mut usize,
+    sync_key_gen: &mut SyncKeyGen<N>,
+) {
     trace!("KEY GENERATION: Handling ack from '{:?}'...", nid);
     let ack_outcome = sync_key_gen
         .handle_ack(nid, ack.clone())
